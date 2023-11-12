@@ -21,7 +21,7 @@ from datetime import date, datetime, timedelta
 from selenium.webdriver.common.action_chains import ActionChains
 import subprocess
 from os import path
-# from line_profiler import LineProfiler # it's for profiling program efficiency and timing it's execution line by line. Connected to #@profile . Then $ python -m line_profiler .\easyapplybot.py.lprof > output.txt to generate output
+# from line_profiler import LineProfiler # it's for profiling program efficiency and timing it's execution line by line. Connected to #@profile . First $ kernprof -l .\easyapplybot.py -> Then $ python -m line_profiler .\easyapplybot.py.lprof > output.txt to generate output
 
 
 log = logging.getLogger(__name__)
@@ -320,7 +320,10 @@ class EasyApplyBot:
                 # children selector is the container of the job cards on the left
                 for link in links:
                     rawLinksEasyApplyCount += 1
-                    if not any(phrase in link.text.lower() for phrase in blacklist.union(blackListTitles)):
+                    if not any(phrase in link.text.lower().split('\n')[:2] # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
+                               # Symmetric Difference (symmetric_difference):
+                                # Returns a new set containing elements that are present in either of the sets, but not in both.
+                                for phrase in blacklist.symmetric_difference(blackListTitles)):
                         temp = link.get_attribute("data-job-id")
                         jobID = temp.split(":")[-1]
                         IDs.append(int(jobID))
@@ -688,3 +691,5 @@ if __name__ == '__main__':
 # make it run headless unless last login attempt lead to captcha, as a setting in the config.yaml
 
 # TODO: play around with auto filling fields which require a number with 0, as it will increase autocompletion rate of applications
+
+# TODO: compare with the LineProfiler, how much faster a headless version would be.
