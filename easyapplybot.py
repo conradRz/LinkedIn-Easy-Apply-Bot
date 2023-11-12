@@ -6,6 +6,7 @@ import logging
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
@@ -20,6 +21,7 @@ from datetime import date, datetime, timedelta
 from selenium.webdriver.common.action_chains import ActionChains
 import subprocess
 from os import path
+# from line_profiler import LineProfiler # it's for profiling program efficiency and timing it's execution line by line. Connected to #@profile . First $ kernprof -l .\easyapplybot.py -> Then $ python -m line_profiler .\easyapplybot.py.lprof > output.txt to generate output
 
 
 log = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ driver = webdriver.Chrome(service=service) # if you do just
 
 num_successful_jobs_global_variable = 0
 
-
+#@profile
 def setupLogger() -> None:
     dt: str = datetime.strftime(datetime.now(), 
                                 "%m_%d_%Y %H_%M_%S ")
@@ -56,6 +58,7 @@ def setupLogger() -> None:
     c_handler.setFormatter(c_format)
     log.addHandler(c_handler)
 
+#@profile
 def get_process_id(process_name):
   """Gets the PID of a process by its name.
 
@@ -81,6 +84,7 @@ def get_process_id(process_name):
 
 process_id = get_process_id("automated-LinkedIn-applying\\run_script.bat")
 
+#@profile
 def terminate_process(process_id):
   """Terminates a process by its PID.
 
@@ -96,14 +100,14 @@ class EasyApplyBot:
     # LinkedIn limits how many you can apply to per day. After that it doesn't allow one to click the easy apply button
     MAX_ALLOWED_POSITIONS_TO_APPLY_TO_PER_DAY = 249
 
+    #@profile
     def __init__(self,
                  username,
                  password,
                  filename='output.csv',
-                 blacklist=[],
-                 blackListTitles=[]) -> None:
+                 blacklist={},
+                 blackListTitles={}) -> None:
 
-        log.info("Welcome to Easy Apply Bot")
         dirpath: str = os.getcwd()
         log.info("current directory is : " + dirpath)
 
@@ -117,6 +121,7 @@ class EasyApplyBot:
         self.blackListTitles = blackListTitles
         self.start_linkedin(username, password)
 
+    #@profile
     def get_appliedIDs(self, filename) -> set | None:
         try:
             df = pd.read_csv(filename,
@@ -159,6 +164,7 @@ class EasyApplyBot:
             log.info(str(e) + "   jobIDs could not be loaded from CSV {}".format(filename))
             return None
 
+    #@profile
     def browser_options(self):
         options = Options()
         options.add_argument("--start-maximized")
@@ -175,6 +181,7 @@ class EasyApplyBot:
         options.add_argument("--disable-blink-features=AutomationControlled")
         return options
 
+    #@profile
     def start_linkedin(self, username, password) -> None:
         log.info("Logging in.....Please wait :)  ")
         self.load_page_and_wait_until_it_stops_loading("https://www.linkedin.com/login?trk=guest_homepage-basic_nav-header-signin")
@@ -193,12 +200,7 @@ class EasyApplyBot:
         except TimeoutException:
             log.info("TimeoutException! Username/password field or login button not found")
 
-    def fill_data(self) -> None:
-        self.browser.set_window_size(1, 1)
-        # self.browser.set_window_position(2000, 2000)
-        self.browser.set_window_position(1, 1) #breaking up here
-        self.browser.maximize_window() #breaking up here, do it earlier and once
-
+    #@profile
     def start_apply(self, positions, locations) -> None:
         if "verification" in self.browser.title.lower():
             winsound.PlaySound("C:\Windows\Media\chimes.wav", winsound.SND_FILENAME)
@@ -206,7 +208,7 @@ class EasyApplyBot:
             log.debug("captcha verification needed")
         # TODO: only have the above activated, if the title mean its a captcha verification
         start: float = time.time()
-        self.fill_data()
+        self.browser.maximize_window()
 
         # Define the CSV file name
         csv_combo_log_file = 'combos_output_log.csv'
@@ -263,6 +265,7 @@ class EasyApplyBot:
             # if len(combos) > 500:
             #     break
 
+    #@profile
     def applications_loop(self, position, location):
 
         count_application = 0
@@ -277,23 +280,10 @@ class EasyApplyBot:
 
         while time.time() - start_time < self.MAX_SEARCH_TIME:
             try:
-                log.info(f"{(self.MAX_SEARCH_TIME - (time.time() - start_time)) // 60} minutes left in this search")
-
                 # sleep to make sure everything loads, add random to make us look human.
-                randoTime: float = random.uniform(3.5, 4.9)
-                log.debug(f"Sleeping for {round(randoTime, 1)}")
-                time.sleep(randoTime)
-
-                #self.load_page(sleep=1) #commented out just now, potentially useless, at least useless on first iteration
-
-                # LinkedIn displays the search results in a scrollable <div> on the left side, we have to scroll to its bottom
-
-                # scrollresults = self.browser.find_element(By.CLASS_NAME,
-                #     "jobs-search-results-list"
-                # )
-                # Selenium only detects visible elements; if we scroll to the bottom too fast, only 8-9 results will be loaded into IDs list
-                # for i in range(300, 3000, 100):
-                #     self.browser.execute_script("arguments[0].scrollTo(0, {})".format(i), scrollresults)
+                # randoTime: float = random.uniform(3.5, 4.9)
+                # log.debug(f"Sleeping for {round(randoTime, 1)}")
+                # time.sleep(randoTime)
 
                 # exit this combo if the page contains "No matching jobs found." as it will have some jobs listed, but those are "Jobs you may be interested in" which are not very relevant location wise
                 if "No matching jobs found" in self.browser.page_source:
@@ -324,30 +314,30 @@ class EasyApplyBot:
                     else:
                         last_link = links[-1].text # don't put this further down, as you will then get StaleElementReferenceException(). Also don't do last_link = links[-1] as that would be reference assignment only, and not hold a copy
 
+                rawLinksEasyApplyCount = 0
                 IDs = []
                 
                 # children selector is the container of the job cards on the left
                 for link in links:
-                    if (not any(phrase.lower() in link.text.lower() for phrase in self.blacklist + self.blackListTitles)):
+                    rawLinksEasyApplyCount += 1
+
+                    # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
+                    inputTextJobTitle = link.text.lower().split('\n')[0]
+                    inputTextCompanyBlacklist = link.text.lower().split('\n')[1]
+
+                    if not (any(phrase in inputTextJobTitle for phrase in self.blackListTitles) 
+                            or 
+                            any(phrase in inputTextCompanyBlacklist for phrase in self.blacklist)):                          
+                            # Symmetric Difference (symmetric_difference):
+                                # Returns a new set containing elements that are present in either of the sets, but not in both. DON'T DO IT, union in this case is an equivalent. Symetric difference cannot handle strings, union can
                         temp = link.get_attribute("data-job-id")
                         jobID = temp.split(":")[-1]
                         IDs.append(int(jobID))
 
-                    # children = link.find_elements("xpath",
-                    #     '//ul[@class="scaffold-layout__list-container"]'
-                    # )
-                    # for child in children:
-                        #self.blacklist looks like this: ['Version 1', 'energy gym', 'Wood Mackenzie']
-
-                        #child.text looks like this: 'Project Manager - HR System Implementation\nDigital Gurus\nCambridge, England, United Kingdom (Remote)\n£70/hr - £80/hr\nActively recruiting\nApplied 3 days ago\nSenior Service Delivery Specialist PMS (Hotel IT) - UK & Ireland\nHRS Hospitality & Retail Systems\nUnited Kingdom (Remote)\n1 school alum works here\nPromoted\nEasy Apply\nCX Project Manager - Compliance\nNtrinsic Consulting\nUnited Kingdom (Remote)\n£45/hr - £51/hr\nActively recruiting\nApplied 3 days ago\nIT Change Manager (SFIA / ITIL)\nPeople Source Consulting\nUnited Kingdom (Remote)\n£60/hr - £80/hr\n2 school alumni work here\nApplied 3 days ago\nSenior ERP Project/Delivery Manager - Remote Working - New!\nRedRock Consulting\nBirmingham, England, United Kingdom (Remote)\n£60K/yr - £70K/yr\nActively recruiting\nPromoted\nEasy Apply\nTechnical Project Manager (Must speak French and English)\nTalogy\nEngland, United Kingdom (Remote)\n$45/yr - $50/yr\n3 company alumni work here\nPromoted\nEasy Apply\nSenior Data Project Manager\nPrimis\nUnited Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nSoftware Project Manager (Fashion/Apparel Industry)\nCGS (Computer Generated Solutions)\nUnited Kingdom (Remote)\n1 company alum works here\nApplied 26 minutes ago\nSolar Project Manager (Construction)\nSpencer Ogden\nUnited Kingdom (Remote)\n2 school alumni work here\nPromoted\nEasy Apply\nPensions Project Manager - GMPe\nBuck, A Gallagher Company\nUnited Kingdom (Remote)\n2 company alumni work here\nPromoted\nEasy Apply\nSenior Project Manager - Marketing, Comms, 2/3D Animation & Webinars\nECOM\nUnited Kingdom (Remote)\n£60K/yr - £65K/yr\nActively recruiting\nPromoted\nEasy Apply\nSenior Project Manager - Medical Devices\nSpacelabs Healthcare\nUnited Kingdom (Remote)\n1 company alum works here\nPromoted\nEasy Apply\nProject Manager - Business Transformation - French Speaking\nTechShack\nUnited Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nFinancial Analyst & Project Manager\nBuck, A Gallagher Company\nUnited Kingdom (Remote)\n2 company alumni work here\nPromoted\nEasy Apply\nD365 Project Manager\nThe Engage Partnership Recruitment\nUnited Kingdom (Remote)\n£100K/yr - £125K/yr\nYour profile matches this job\nPromoted\nEasy Apply\nCAFM Project Manager\nJumar\nUnited Kingdom (Remote)\n£50/hr - £75/hr\nActively recruiting\nPromoted\nEasy Apply\nSenior Project Manager - Dynamics D365 (BC OR CE) - UK\nConspicuous\nUnited Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nEngagement Manager - South West\nMacmillan Cancer Support\nBristol, England, United Kingdom (Remote)\nYour profile matches this job\nPromoted\nSAP Project Manager\nIBU Consulting\nUnited Kingdom (Remote)\nActively recruiting\n4 months ago\nEasy Apply\nSenior Project Manager\nISL Talent\nEngland, United Kingdom (Remote)\n£50K/yr - £60K/yr\nActively recruiting\nPromoted\nEasy Apply\nTranscreation Project Manager\nKey Content - Agency\nOxford, England, United Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nSenior Project Manager\nPeaple Talent\nCardiff, Wales, United Kingdom (Remote)\n£50K/yr - £55K/yr\nActively recruiting\nPromoted\nEasy Apply\nSenior PMO / Project Change Manager (Healthcare)\nAttain\nUnited Kingdom (Remote)\n3 school alumni work here\nPromoted\nEasy Apply\nSenior Project Manager - London Markets\nDXC Technology\nEngland, United Kingdom (Remote)\n12 company alumni work here\nPromoted\nEasy Apply\nMicrosoft Project Manager\nCloud Decisions\nUnited Kingdom (Remote)\n£60K/yr - £70K/yr\nActively recruiting\nPromoted\nEasy Apply'
-                        #link.text looks like this: 'Technical Project Manager (Must speak French and English)\nTalogy\nEngland, United Kingdom (Remote)\n$45/yr - $50/yr\n3 company alumni work here\nPromoted\nEasy Apply'
-                        # if child.text not in self.blacklist:
-                        #     temp = link.get_attribute("data-job-id")
-                        #     jobID = temp.split(":")[-1]
-                        #     IDs.append(int(jobID))
-                #IDs = set(IDs)
+                log.info("it found this many job IDs with EasyApply button: %s", rawLinksEasyApplyCount)
+            
                 length_of_ids = len(IDs)
-                log.info("it found this many job IDs with EasyApply button: %s", length_of_ids)
+                log.info("it found this many job IDs with EasyApply button and not containing any blacklisted phrases: %s", length_of_ids)
                 # remove already applied jobs
                 jobIDs = list(set(IDs) - self.appliedJobIDs)
                 # given how the script works not, it should be the same number to this print and the above print, unless you also implement filtration by the job titles without opening the thing  
@@ -367,22 +357,54 @@ class EasyApplyBot:
 
 
                 # loop over IDs to apply
-                # although _ doesn't seem used it, don't delete it. It's there for a reason
+                # although _ doesn't seem used, don't delete it. It's there for a reason
                 for _, jobID in enumerate(jobIDs):
                     count_job += 1
                     self.get_job_page(jobID)
 
                     # get easy apply button
-                    button = self.get_easy_apply_button()
+                    easyApplyButton = self.get_easy_apply_button()
                     # word filter to skip positions not wanted
 
-                    if button is not False:
+                    if easyApplyButton is not False:
                         string_easy = "* has Easy Apply Button"
                         log.info("Clicking the EASY apply button")
 
-                        self.browser.execute_script("let xpathExpression = '//button[contains(@class, \"jobs-apply-button\")]'; let matchingElement = document.evaluate(xpathExpression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue; if (matchingElement) {matchingElement.click()} else {console.log(\"Element not found with the given XPath expression.\")}")
-                        #button.click() #this was commented out, as it stopped working after LinkedIn updated their website, and self.browser.execute_script() seem to work better (it's just lower level code than selenium. I could probably do all what selenium does with just JS)
-                        time.sleep(4)
+                        while True:
+                            try:
+                                if easyApplyButton.is_enabled():
+                                    easyApplyButton.click()
+                                    try:
+                                        # Wait for the <h2> element to become visible
+                                        WebDriverWait(self.browser, 10).until(
+                                            EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
+                                        )
+                                        print("Element is visible. Clicking Easy Apply button successful.")
+                                        break  # exit the While loop if the element is visible
+                                    except Exception as e:
+                                        print(f"Error: {e}")
+                            except StaleElementReferenceException:
+                                # If the element is stale, try to find it again
+                                easyApplyButton = self.get_easy_apply_button()
+                                continue
+                            else:
+                                self.browser.execute_script("""
+                                    let xpathExpression = '//button[contains(@class, "jobs-apply-button")]';
+                                    let matchingElement = document.evaluate(xpathExpression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                                    if (matchingElement) {
+                                        matchingElement.click();
+                                    }
+                                """)
+                                try:
+                                    # Wait for the <h2> element to become visible
+                                    WebDriverWait(self.browser, 10).until(
+                                        EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
+                                    )
+                                    print("Element is visible. Clicking Easy Apply button successful.")
+                                    break  # exit the While loop if the element is visible
+                                except Exception as e:
+                                    print(f"Error: {e}")
+
                         result: bool = self.send_resume()
                         count_application += 1
                     else:
@@ -403,15 +425,7 @@ class EasyApplyBot:
 
                     log.info(f"Position {position_number}:\n {sanitisedBrowserTitle} \n {string_easy} \n")
 
-                    self.write_to_file(button, jobID, sanitisedBrowserTitle, result)
-
-                    # # sleep every 30 applications
-                    # if count_application != 0 and count_application % 30 == 0:
-                    #     sleepTime: int = random.randint(300, 500)
-                    #     log.info(f"""********count_application: {count_application}************\n\n
-                    #                 Time for a nap - see you in:{int(sleepTime / 60)} min
-                    #             ****************************************\n\n""")
-                    #     time.sleep(sleepTime)
+                    self.write_to_file(easyApplyButton, jobID, sanitisedBrowserTitle, result)
 
                     # go to new page if all jobs are done
                     if count_job == len(jobIDs):                        
@@ -438,7 +452,9 @@ class EasyApplyBot:
             except Exception as e:
                 log.info(e)
 
+    #@profile
     def write_to_file(self, button, jobID, browserTitle, result) -> None:
+        #@profile
         def re_extract(text, pattern):
             target = re.search(pattern, text)
             if target:
@@ -455,6 +471,7 @@ class EasyApplyBot:
             writer = csv.writer(f)
             writer.writerow(toWrite)
 
+    #@profile
     def get_job_page(self, jobID):
 
         job: str = 'https://www.linkedin.com/jobs/view/' + str(jobID)
@@ -462,25 +479,27 @@ class EasyApplyBot:
         self.job_page = self.load_page(sleep=0.5)
         return self.job_page
 
+    #@profile
     def get_easy_apply_button(self):
         while True:
             try:
                 button = self.browser.find_elements("xpath",
                     '//button[contains(@class, "jobs-apply-button")]'
                 )
-                EasyApplyButton = button[0]
+                easyApplyButton = button[1]
                 break # Exit the loop if button is found successfully
             except IndexError: # this happens very rarely, it hapened only once after 1500 succesful applications
                 print("Button not found. Waiting for 30 seconds and trying again...")
                 time.sleep(30)  # Wait for 30 seconds before trying again
             except Exception as e: 
                 log.info("Exception:",e)
-                EasyApplyButton = False
+                easyApplyButton = False
 
-        return EasyApplyButton        
+        return easyApplyButton        
 
-
+    #@profile
     def send_resume(self) -> bool:
+        #@profile
         def is_present(button_locator) -> bool:
             return len(self.browser.find_elements(button_locator[0],
                                                   button_locator[1])) > 0
@@ -545,7 +564,7 @@ class EasyApplyBot:
                         # message_text = message_element.text
                         # log.info(message_text)
                         break_outer_loop = True  # Set the flag to break the outer loop
-                        log.debug("setting break_outer_loop to True")
+                        log.debug("setting break_outer_loop to True, due to 'message_elements' existing")
                         # winsound.PlaySound("C:\Windows\Media\chimes.wav", winsound.SND_FILENAME)
                         # input("Press Enter to continue...")
                         # print("needed manual intervention")
@@ -561,8 +580,8 @@ class EasyApplyBot:
                             submitted = True
                         if i != 2:
                             break
-                if button is None or break_outer_loop:
-                    log.info(f"Could not complete submission, break_outer_loop is {break_outer_loop} and button is {button}")
+                if break_outer_loop: #button is None or break_outer_loop:
+                    log.info(f"Could not complete submission, break_outer_loop is {break_outer_loop} and button is {button}") # if you don't figure it out why it sometimes skips valid jobs here, you will be logging job ids and applying to them manually - they all have easy apply
                     # TODO: job ID should be added to applied to, to avoid it being openend again
                     break
                 elif submitted:
@@ -591,28 +610,20 @@ class EasyApplyBot:
 
         return submitted
 
+    #@profile
     def load_page(self, sleep=1):
-        # scroll_page = 0
-        # while scroll_page < 4000:
-        #     self.browser.execute_script("window.scrollTo(0," + str(scroll_page) + " );")
-        #     scroll_page += 300
-        #     time.sleep(sleep)
-
-        # if sleep != 1:
-        #     self.browser.execute_script("window.scrollTo(0,0);")
-        #     time.sleep(sleep * 2)
-        #time.sleep(random.uniform(2.5, 3.5))
         if sleep == 2:
             scrollresults = self.browser.find_element(By.CLASS_NAME,
                 "jobs-search-results-list")
             # Selenium only detects visible elements; if we scroll to the bottom too fast, only 8-9 results will be loaded into IDs list
-            for i in range(300, 3600, 100):
+            for i in range(300, 3600, 150): #potential for speeding up, just increase the last value gradually
                 self.browser.execute_script("arguments[0].scrollTo(0, {})".format(i), scrollresults)
                 time.sleep(0.3)
 
         page = BeautifulSoup(self.browser.page_source, "lxml")
         return page
 
+    #@profile
     def next_jobs_page(self, position, location, jobs_per_page):
         self.load_page_and_wait_until_it_stops_loading("https://www.linkedin.com/jobs/search/?f_LF=f_AL" + "&distance=5" + "&keywords=" +
             position + location + "&sortBy=DD" + "&start=" + str(jobs_per_page))
@@ -621,11 +632,11 @@ class EasyApplyBot:
         self.load_page(sleep=2)
         return (self.browser, jobs_per_page)
     
+    #@profile
     def load_page_and_wait_until_it_stops_loading(self, job_url):
         self.browser.get(job_url)
         self.wait.until(lambda driver: self.browser.execute_script('return document.readyState') == 'complete')
         # Page is now fully loaded and ready to be interacted with
-
 
 if __name__ == '__main__':
     with open("config.yaml", 'r') as stream:
@@ -643,8 +654,8 @@ if __name__ == '__main__':
 
     output_filename: list = [f for f in parameters.get('output_filename', ['output.csv']) if f != None]
     output_filename: list = output_filename[0] if len(output_filename) > 0 else 'output.csv'
-    blacklist = parameters.get('blacklist', [])
-    blackListTitles = parameters.get('blackListTitles', [])
+    blacklist = {phrase.lower() for phrase in parameters.get('blacklist', {})}
+    blackListTitles = {phrase.lower() for phrase in parameters.get('blackListTitles', {})}
 
     bot = EasyApplyBot(parameters['username'],
                        parameters['password'],
@@ -672,3 +683,5 @@ if __name__ == '__main__':
 # make it run headless unless last login attempt lead to captcha, as a setting in the config.yaml
 
 # TODO: play around with auto filling fields which require a number with 0, as it will increase autocompletion rate of applications
+
+# TODO: compare with the LineProfiler, how much faster a headless version would be.
