@@ -320,27 +320,20 @@ class EasyApplyBot:
                 # children selector is the container of the job cards on the left
                 for link in links:
                     rawLinksEasyApplyCount += 1
-                    if not any(phrase in link.text.lower().split('\n')[:2] # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
-                               # Symmetric Difference (symmetric_difference):
-                                # Returns a new set containing elements that are present in either of the sets, but not in both.
-                                for phrase in blacklist.symmetric_difference(blackListTitles)):
+
+                    # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
+                    inputTextJobTitle = link.text.lower().split('\n')[0]
+                    inputTextCompanyBlacklist = link.text.lower().split('\n')[1]
+
+                    if not (any(phrase in inputTextJobTitle for phrase in self.blackListTitles) 
+                            or 
+                            any(phrase in inputTextCompanyBlacklist for phrase in self.blacklist)):                          
+                            # Symmetric Difference (symmetric_difference):
+                                # Returns a new set containing elements that are present in either of the sets, but not in both. DON'T DO IT, union in this case is an equivalent. Symetric difference cannot handle strings, union can
                         temp = link.get_attribute("data-job-id")
                         jobID = temp.split(":")[-1]
                         IDs.append(int(jobID))
 
-                    # children = link.find_elements("xpath",
-                    #     '//ul[@class="scaffold-layout__list-container"]'
-                    # )
-                    # for child in children:
-                        #self.blacklist looks like this: ['Version 1', 'energy gym', 'Wood Mackenzie']
-
-                        #child.text looks like this: 'Project Manager - HR System Implementation\nDigital Gurus\nCambridge, England, United Kingdom (Remote)\n£70/hr - £80/hr\nActively recruiting\nApplied 3 days ago\nSenior Service Delivery Specialist PMS (Hotel IT) - UK & Ireland\nHRS Hospitality & Retail Systems\nUnited Kingdom (Remote)\n1 school alum works here\nPromoted\nEasy Apply\nCX Project Manager - Compliance\nNtrinsic Consulting\nUnited Kingdom (Remote)\n£45/hr - £51/hr\nActively recruiting\nApplied 3 days ago\nIT Change Manager (SFIA / ITIL)\nPeople Source Consulting\nUnited Kingdom (Remote)\n£60/hr - £80/hr\n2 school alumni work here\nApplied 3 days ago\nSenior ERP Project/Delivery Manager - Remote Working - New!\nRedRock Consulting\nBirmingham, England, United Kingdom (Remote)\n£60K/yr - £70K/yr\nActively recruiting\nPromoted\nEasy Apply\nTechnical Project Manager (Must speak French and English)\nTalogy\nEngland, United Kingdom (Remote)\n$45/yr - $50/yr\n3 company alumni work here\nPromoted\nEasy Apply\nSenior Data Project Manager\nPrimis\nUnited Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nSoftware Project Manager (Fashion/Apparel Industry)\nCGS (Computer Generated Solutions)\nUnited Kingdom (Remote)\n1 company alum works here\nApplied 26 minutes ago\nSolar Project Manager (Construction)\nSpencer Ogden\nUnited Kingdom (Remote)\n2 school alumni work here\nPromoted\nEasy Apply\nPensions Project Manager - GMPe\nBuck, A Gallagher Company\nUnited Kingdom (Remote)\n2 company alumni work here\nPromoted\nEasy Apply\nSenior Project Manager - Marketing, Comms, 2/3D Animation & Webinars\nECOM\nUnited Kingdom (Remote)\n£60K/yr - £65K/yr\nActively recruiting\nPromoted\nEasy Apply\nSenior Project Manager - Medical Devices\nSpacelabs Healthcare\nUnited Kingdom (Remote)\n1 company alum works here\nPromoted\nEasy Apply\nProject Manager - Business Transformation - French Speaking\nTechShack\nUnited Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nFinancial Analyst & Project Manager\nBuck, A Gallagher Company\nUnited Kingdom (Remote)\n2 company alumni work here\nPromoted\nEasy Apply\nD365 Project Manager\nThe Engage Partnership Recruitment\nUnited Kingdom (Remote)\n£100K/yr - £125K/yr\nYour profile matches this job\nPromoted\nEasy Apply\nCAFM Project Manager\nJumar\nUnited Kingdom (Remote)\n£50/hr - £75/hr\nActively recruiting\nPromoted\nEasy Apply\nSenior Project Manager - Dynamics D365 (BC OR CE) - UK\nConspicuous\nUnited Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nEngagement Manager - South West\nMacmillan Cancer Support\nBristol, England, United Kingdom (Remote)\nYour profile matches this job\nPromoted\nSAP Project Manager\nIBU Consulting\nUnited Kingdom (Remote)\nActively recruiting\n4 months ago\nEasy Apply\nSenior Project Manager\nISL Talent\nEngland, United Kingdom (Remote)\n£50K/yr - £60K/yr\nActively recruiting\nPromoted\nEasy Apply\nTranscreation Project Manager\nKey Content - Agency\nOxford, England, United Kingdom (Remote)\nActively recruiting\nPromoted\nEasy Apply\nSenior Project Manager\nPeaple Talent\nCardiff, Wales, United Kingdom (Remote)\n£50K/yr - £55K/yr\nActively recruiting\nPromoted\nEasy Apply\nSenior PMO / Project Change Manager (Healthcare)\nAttain\nUnited Kingdom (Remote)\n3 school alumni work here\nPromoted\nEasy Apply\nSenior Project Manager - London Markets\nDXC Technology\nEngland, United Kingdom (Remote)\n12 company alumni work here\nPromoted\nEasy Apply\nMicrosoft Project Manager\nCloud Decisions\nUnited Kingdom (Remote)\n£60K/yr - £70K/yr\nActively recruiting\nPromoted\nEasy Apply'
-                        #link.text looks like this: 'Technical Project Manager (Must speak French and English)\nTalogy\nEngland, United Kingdom (Remote)\n$45/yr - $50/yr\n3 company alumni work here\nPromoted\nEasy Apply'
-                        # if child.text not in self.blacklist:
-                        #     temp = link.get_attribute("data-job-id")
-                        #     jobID = temp.split(":")[-1]
-                        #     IDs.append(int(jobID))
-                #IDs = set(IDs)
                 log.info("it found this many job IDs with EasyApply button: %s", rawLinksEasyApplyCount)
             
                 length_of_ids = len(IDs)
@@ -412,7 +405,6 @@ class EasyApplyBot:
                                 except Exception as e:
                                     print(f"Error: {e}")
 
-                        time.sleep(3)
                         result: bool = self.send_resume()
                         count_application += 1
                     else:
