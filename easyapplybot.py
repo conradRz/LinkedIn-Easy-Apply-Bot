@@ -358,9 +358,6 @@ class EasyApplyBot:
                     if len(IDs) == 0:
                         jobs_per_page = jobs_per_page + 25
                         count_job = 0
-                        log.info("""****************************************\n\n
-                        Going to next jobs page, YEAAAHHH!!
-                        ****************************************\n\n""")
                         self.browser, jobs_per_page = self.next_jobs_page(position,
                                                                         location,
                                                                         jobs_per_page)
