@@ -30,7 +30,7 @@ log = logging.getLogger(__name__)
 service = Service(executable_path = path.dirname(__file__) + r"\assets\chromedriver.exe")
 driver = webdriver.Chrome(service=service) # if you do just 
 # driver = webdriver.Chrome() 
-# you will sometimes get the below, this might be because they don't keep on top of things
+# you will sometimes get the below, if you use driver = webdriver.Chrome(), this might be because they don't keep on top of things
 
 # Exception has occurred: NoSuchDriverException
 # Message: Unable to obtain chromedriver using Selenium Manager; Message: Unsuccessful command executed: C:\Users\User\AppData\Local\Programs\Python\Python39\lib\site-packages\selenium\webdriver\common\windows\selenium-manager.exe --browser chrome --output json.
@@ -319,8 +319,8 @@ class EasyApplyBot:
                                                                     "months ago"]):
                         log.debug("moving onto the next combo, due to no new jobs available to apply to for this combo")
                         break # this skips this job/location combo
-                    else:
-                        last_link_text = links[-1].text # don't put this further down, as you will then get StaleElementReferenceException(). Also don't do last_link = links[-1] as that would be reference assignment only, and not hold a copy
+
+                    last_link_text = links[-1].text # don't put this further down, as you will then get StaleElementReferenceException(). Also don't do last_link = links[-1] as that would be reference assignment only, and not hold a copy
 
                     rawLinksEasyApplyCount = 0
                     IDs = set() # type set on purpose, as they won't be repeating themselves
@@ -330,9 +330,9 @@ class EasyApplyBot:
                         rawLinksEasyApplyCount += 1
 
                         temp = link.get_attribute("data-job-id")#[:10]  # Limit job ID to 10 characters
-                        jobID = temp.split(":")[-1] 
+                        jobID = int(temp.split(":")[-1])
 
-                        if jobID not in self.appliedJobIDs: # be careful if they are both of the same type - string, mixed types won't work
+                        if jobID not in self.appliedJobIDs: # be careful if they are both of the same type - string, mixed types won't work. Now it works.
                             self.appliedJobIDs.add(jobID)
                             # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
                             inputTextJobTitle = link.text.lower().split('\n')[0]
@@ -393,23 +393,23 @@ class EasyApplyBot:
                                         # If the element is stale, try to find it again
                                         easyApplyButton = self.get_easy_apply_button()
                                         continue
-                                    else:
-                                        self.browser.execute_script("""
-                                            let xpathExpression = '//button[contains(@class, "jobs-apply-button")]';
-                                            let matchingElement = document.evaluate(xpathExpression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                                            if (matchingElement) {
-                                                matchingElement.click();
-                                            }
-                                        """)
-                                        try:
-                                            # Wait for the <h2> element to become visible
-                                            WebDriverWait(self.browser, 10).until(
-                                                EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
-                                            )
-                                            print("Element is visible. Clicking Easy Apply button successful.")
-                                            break  # exit the While loop if the element is visible
-                                        except Exception as e:
-                                            print(f"Error: {e}")
+                                    # else:
+                                    #     self.browser.execute_script("""
+                                    #         let xpathExpression = '//button[contains(@class, "jobs-apply-button")]';
+                                    #         let matchingElement = document.evaluate(xpathExpression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                                    #         if (matchingElement) {
+                                    #             matchingElement.click();
+                                    #         }
+                                    #     """)
+                                    #     try:
+                                    #         # Wait for the <h2> element to become visible
+                                    #         WebDriverWait(self.browser, 10).until(
+                                    #             EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
+                                    #         )
+                                    #         print("Element is visible. Clicking Easy Apply button successful.")
+                                    #         break  # exit the While loop if the element is visible
+                                    #     except Exception as e:
+                                    #         print(f"Error: {e}")
 
                                 result: bool = self.send_resume()
                                 count_application += 1
@@ -493,7 +493,8 @@ class EasyApplyBot:
                     '//button[contains(@class, "jobs-apply-button")]'
                 )
                 easyApplyButton = button[1]
-                break # Exit the loop if button is found successfully
+                if easyApplyButton:
+                    break # Exit the loop if button is found successfully
             except IndexError: # this happens very rarely, it hapened only once after 1500 succesful applications
                 print("Button not found. Waiting for 2 seconds and trying again...")
                 time.sleep(2)  # Wait for 2 seconds before trying again
@@ -562,7 +563,17 @@ class EasyApplyBot:
 
                     succesfully_finished_submission = self.browser.find_elements(By.XPATH,
                                                                                  "//span[@class='artdeco-button__text'][contains(text(), 'Done')]")
-                    if succesfully_finished_submission:
+                    
+                    succesfully_finished_submission_check2 = self.browser.find_elements(By.XPATH,
+                                                                                 "//span[@class='jpac-modal-header'][contains(text(), 'Your application was sent to')]")
+                    
+                    succesfully_finished_submission_check3 = self.browser.find_elements(By.XPATH,
+                                                                                 "//span[@class='t-black--light'][contains(text(), 'You can keep track of your application in the \"Applied\" tab of My Jobs')]")
+
+                    if (succesfully_finished_submission or 
+                        succesfully_finished_submission_check2 or 
+                        succesfully_finished_submission_check3
+                        ):
                         submitted = True
                         break
 
@@ -637,7 +648,7 @@ class EasyApplyBot:
             # Selenium only detects visible elements; if we scroll to the bottom too fast, only 8-9 results will be loaded into IDs list
             for i in range(300, 3600, 150): #potential for speeding up, just increase the last value gradually
                 self.browser.execute_script("arguments[0].scrollTo(0, {})".format(i), scrollresults)
-                time.sleep(0.3)
+                time.sleep(0.3) # otherwise it scrolls too fast
 
         page = BeautifulSoup(self.browser.page_source, "lxml")
         return page
@@ -695,24 +706,17 @@ if __name__ == '__main__':
     else:
         exit() #just incase if running from the VSC
 
-# log.debug("No links found")
-# figure out why you have ^ two of the above statements in your code. The code seem to be breaking also, perhaps because of that 
-#NOT (senior OR lead OR chief OR gas OR forklift OR lift OR fire OR electric OR air OR sprinkler OR HVAC OR construction OR mechanical)
-
 # make it run headless unless last login attempt lead to captcha, as a setting in the config.yaml
 
 # TODO: play around with auto filling fields which require a number with 0, as it will increase autocompletion rate of applications
 
 # TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.
 
-
 # for those two, handle it in a specific way, but for other problems, do a timer/count number of tries, then first refresh, and if that fails, move onto the next job
     # handle situation where you have "No longer accepting applications" instead of an easy apply button, as the script became stuck in a loop looking for the easy apply button once
 
     # if "Tunnel Connection Failed" refresh the website
 
-# jobs IDs might repeat themselves, as in think of a situation where you imported a list of past ids, applied to some, was unable to apply to some, yet if they come up in another combo search, the script in the same iteration, will again try to apply to such a job - better to hold them in a variable, and do another check, as that's faster than trying to apply again
-    # line  jobIDs = list(set(IDs) - self.appliedJobIDs)    should be of significance here
-    # should be fixed now, although untested 14/Nov/23
+# right now, you're assesing how many applications applied to by one way of counting. Make sure for the script to be able to also pick up on other ways when for example easyapply button becomes grayed out due to applying to over 250 jobs/day. In those cases the script should exit both loops
 
-# figure out why it sometimes saves it as 3764944242,3) clear the output to maintain dat quality
+# looking if first job is not "weeks" old, should be done before even scrolling down, and if so, move to the next combo, although that will require serious reorganization of the code, and the current code works well, it's just that sub functionality could be improved to gain a few seconds if the combo is early discarded
