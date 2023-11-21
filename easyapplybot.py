@@ -7,6 +7,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.common.exceptions import TimeoutException
 from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.common.by import By
@@ -29,7 +30,7 @@ log = logging.getLogger(__name__)
 service = Service(executable_path = path.dirname(__file__) + r"\assets\chromedriver.exe")
 driver = webdriver.Chrome(service=service) # if you do just 
 # driver = webdriver.Chrome() 
-# you will sometimes get the below, this might be because they don't keep on top of things
+# you will sometimes get the below, if you use driver = webdriver.Chrome(), this might be because they don't keep on top of things
 
 # Exception has occurred: NoSuchDriverException
 # Message: Unable to obtain chromedriver using Selenium Manager; Message: Unsuccessful command executed: C:\Users\User\AppData\Local\Programs\Python\Python39\lib\site-packages\selenium\webdriver\common\windows\selenium-manager.exe --browser chrome --output json.
@@ -273,8 +274,6 @@ class EasyApplyBot:
         jobs_per_page = 0
         start_time: float = time.time()
 
-        # self.browser.set_window_position(1, 1) #breaking up here
-        # self.browser.maximize_window() #breaking up here, do it earlier and once
         self.browser, _ = self.next_jobs_page(position, location, jobs_per_page)
         log.info("Looking for jobs.. Please wait..")
 
@@ -297,10 +296,19 @@ class EasyApplyBot:
 
                 if len(links) == 0:
                     log.debug("No links found")
-                    break
-                else: # we have some links, but some of them are over 1 week old, then skip this job/location combo, and move to the next one # TODO: would be to add this to config.yaml as an option
-                    first_link = links[0]
-                    if any(phrase in first_link.text for phrase in ["week ago", 
+                    jobs_per_page = jobs_per_page + 25
+                    count_job = 0
+                    log.info("""****************************************\n\n
+                    Going to next jobs page, YEAAAHHH!!
+                    ****************************************\n\n""")
+                    self.browser, jobs_per_page = self.next_jobs_page(position,
+                                                                    location,
+                                                                    jobs_per_page)
+                    # break #that will move onto the next combo, but that's not what we want, we want to go into the next page instead
+
+                else: # we have some links, but first one of them are over 1 week old, then skip this job/location combo, and move to the next one # TODO: would be to add this to config.yaml as an option
+                    first_link_text = links[0].text
+                    if any(phrase in first_link_text for phrase in ["week ago", 
                                                                     "6 days ago", 
                                                                     "5 days ago", 
                                                                     "4 days ago", 
@@ -311,144 +319,142 @@ class EasyApplyBot:
                                                                     "months ago"]):
                         log.debug("moving onto the next combo, due to no new jobs available to apply to for this combo")
                         break # this skips this job/location combo
-                    else:
-                        last_link = links[-1].text # don't put this further down, as you will then get StaleElementReferenceException(). Also don't do last_link = links[-1] as that would be reference assignment only, and not hold a copy
 
-                rawLinksEasyApplyCount = 0
-                IDs = []
-                
-                # children selector is the container of the job cards on the left
-                for link in links:
-                    rawLinksEasyApplyCount += 1
+                    last_link_text = links[-1].text # don't put this further down, as you will then get StaleElementReferenceException(). Also don't do last_link = links[-1] as that would be reference assignment only, and not hold a copy
 
-                    # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
-                    inputTextJobTitle = link.text.lower().split('\n')[0]
-                    inputTextCompanyBlacklist = link.text.lower().split('\n')[1]
-
-                    if not (any(phrase in inputTextJobTitle for phrase in self.blackListTitles) 
-                            or 
-                            any(phrase in inputTextCompanyBlacklist for phrase in self.blacklist)):                          
-                            # Symmetric Difference (symmetric_difference):
-                                # Returns a new set containing elements that are present in either of the sets, but not in both. DON'T DO IT, union in this case is an equivalent. Symetric difference cannot handle strings, union can
-                        temp = link.get_attribute("data-job-id")
-                        jobID = temp.split(":")[-1]
-                        IDs.append(int(jobID))
-
-                log.info("it found this many job IDs with EasyApply button: %s", rawLinksEasyApplyCount)
-            
-                length_of_ids = len(IDs)
-                log.info("it found this many job IDs with EasyApply button and not containing any blacklisted phrases: %s", length_of_ids)
-                # remove already applied jobs
-                jobIDs = list(set(IDs) - self.appliedJobIDs)
-                # given how the script works not, it should be the same number to this print and the above print, unless you also implement filtration by the job titles without opening the thing  
-                log.info("This many job IDs passed filtration: %s", len(jobIDs))
-
-                # it assumed that 25 jobs are listed in the results window
-                if len(jobIDs) == 0 and len(IDs) > 23:
-                    jobs_per_page = jobs_per_page + 25
-                    count_job = 0
-                    self.browser, jobs_per_page = self.next_jobs_page(position,
-                                                                    location,
-                                                                    jobs_per_page)
+                    rawLinksEasyApplyCount = 0
+                    IDs = set() # type set on purpose, as they won't be repeating themselves
                     
-                if len(jobIDs) == 0 and len(IDs) <= 23:
-                    log.debug("No links found")
-                    break
+                    # children selector is the container of the job cards on the left
+                    for link in links:
+                        rawLinksEasyApplyCount += 1
 
+                        temp = link.get_attribute("data-job-id")#[:10]  # Limit job ID to 10 characters
+                        jobID = int(temp.split(":")[-1])
 
-                # loop over IDs to apply
-                # although _ doesn't seem used, don't delete it. It's there for a reason
-                for _, jobID in enumerate(jobIDs):
-                    count_job += 1
-                    self.get_job_page(jobID)
+                        if jobID not in self.appliedJobIDs: # be careful if they are both of the same type - string, mixed types won't work. Now it works.
+                            self.appliedJobIDs.add(jobID)
+                            # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
+                            inputTextJobTitle = link.text.lower().split('\n')[0]
+                            inputTextCompanyBlacklist = link.text.lower().split('\n')[1]
 
-                    # get easy apply button
-                    easyApplyButton = self.get_easy_apply_button()
-                    # word filter to skip positions not wanted
+                            if not (any(phrase in inputTextJobTitle for phrase in self.blackListTitles) 
+                                    or 
+                                    any(phrase in inputTextCompanyBlacklist for phrase in self.blacklist)):                          
+                                    # Symmetric Difference (symmetric_difference):
+                                        # Returns a new set containing elements that are present in either of the sets, but not in both. DON'T DO IT, union in this case is an equivalent. Symetric difference cannot handle strings, union can
+                                IDs.add(jobID)
 
-                    if easyApplyButton is not False:
-                        string_easy = "* has Easy Apply Button"
-                        log.info("Clicking the EASY apply button")
+                    log.info("it found this many job IDs with EasyApply button: %s", rawLinksEasyApplyCount)
+            
+                    length_of_ids = len(IDs)
+                    log.info("it found this many job IDs with EasyApply button and not containing any blacklisted phrases, as well as filtration of already applied to jobs: %s", length_of_ids)
+                    # # remove already applied jobs
+                    # jobIDs = set(IDs).difference(self.appliedJobIDs)
+                    # # given how the script works now, it should be the same number to this print and the above print, unless you also implement filtration by the job titles without opening the thing  
+                    # log.info("This many job IDs passed filtration: %s", len(jobIDs))
 
-                        while True:
-                            try:
-                                if easyApplyButton.is_enabled():
-                                    easyApplyButton.click()
-                                    try:
-                                        # Wait for the <h2> element to become visible
-                                        WebDriverWait(self.browser, 10).until(
-                                            EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
-                                        )
-                                        print("Element is visible. Clicking Easy Apply button successful.")
-                                        break  # exit the While loop if the element is visible
-                                    except Exception as e:
-                                        print(f"Error: {e}")
-                            except StaleElementReferenceException:
-                                # If the element is stale, try to find it again
-                                easyApplyButton = self.get_easy_apply_button()
-                                continue
-                            else:
-                                self.browser.execute_script("""
-                                    let xpathExpression = '//button[contains(@class, "jobs-apply-button")]';
-                                    let matchingElement = document.evaluate(xpathExpression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                                    if (matchingElement) {
-                                        matchingElement.click();
-                                    }
-                                """)
-                                try:
-                                    # Wait for the <h2> element to become visible
-                                    WebDriverWait(self.browser, 10).until(
-                                        EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
-                                    )
-                                    print("Element is visible. Clicking Easy Apply button successful.")
-                                    break  # exit the While loop if the element is visible
-                                except Exception as e:
-                                    print(f"Error: {e}")
-
-                        result: bool = self.send_resume()
-                        count_application += 1
-                    else:
-                        log.info("The button does not exist.")
-                        string_easy = "* Doesn't have Easy Apply Button"
-                        # TODO: job ID should be added to applied to, to avoid it being openend again
-                        result = False
-
-                    position_number: str = str(count_job + jobs_per_page)
-
-                    # Define a regular expression pattern to match non-UTF-8 characters
-                    non_utf8_pattern = re.compile(r'[^\x00-\x7F]+')
-
-                    # Remove or replace non-UTF-8 characters with a space
-                    cleaned_title = re.sub(non_utf8_pattern, ' ', self.browser.title)
-
-                    sanitisedBrowserTitle = cleaned_title.encode("utf-8").decode("utf-8")
-
-                    log.info(f"Position {position_number}:\n {sanitisedBrowserTitle} \n {string_easy} \n")
-
-                    self.write_to_file(easyApplyButton, jobID, sanitisedBrowserTitle, result)
-
-                    # go to new page if all jobs are done
-                    if count_job == len(jobIDs):                        
-                        # break right here in case last job was old, this will save another reload, and just speed thing up in general. If it matches, do a break statement
-                        if any(phrase in last_link for phrase in ["week ago", 
-                                                                  "6 days ago", 
-                                                                  "5 days ago", 
-                                                                  "4 days ago", 
-                                                                  "3 days ago", 
-                                                                  # "2 days ago", 
-                                                                  "weeks ago", 
-                                                                  "month ago", 
-                                                                  "months ago"]):
-                            log.debug("moving onto the next combo, due to no new jobs available to apply to for this combo")
-                            break # this skips this job/location combo
+                    # assumes it didn't find any suitable job, moving onto the next page
+                    if len(IDs) == 0:
                         jobs_per_page = jobs_per_page + 25
                         count_job = 0
-                        log.info("""****************************************\n\n
-                        Going to next jobs page, YEAAAHHH!!
-                        ****************************************\n\n""")
                         self.browser, jobs_per_page = self.next_jobs_page(position,
                                                                         location,
                                                                         jobs_per_page)
+                    else:
+                        # loop over IDs to apply
+                        # although _ doesn't seem used, don't delete it. It's there for a reason
+                        for _, jobID in enumerate(IDs):
+                            count_job += 1
+                            self.get_job_page(jobID)
+
+                            # get easy apply button
+                            easyApplyButton = self.get_easy_apply_button()
+                            # word filter to skip positions not wanted
+
+                            if easyApplyButton is not False:
+                                string_easy = "* has Easy Apply Button"
+                                log.info("Clicking the EASY apply button")
+
+                                while True:
+                                    try:
+                                        if easyApplyButton.is_enabled():
+                                            easyApplyButton.click()
+                                            try:
+                                                # Wait for the <h2> element to become visible
+                                                WebDriverWait(self.browser, 10).until(
+                                                    EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
+                                                )
+                                                print("Element is visible. Clicking Easy Apply button successful.")
+                                                break  # exit the While loop if the element is visible
+                                            except Exception as e:
+                                                print(f"Error: {e}")
+                                    except StaleElementReferenceException:
+                                        # If the element is stale, try to find it again
+                                        easyApplyButton = self.get_easy_apply_button()
+                                        continue
+                                    # else:
+                                    #     self.browser.execute_script("""
+                                    #         let xpathExpression = '//button[contains(@class, "jobs-apply-button")]';
+                                    #         let matchingElement = document.evaluate(xpathExpression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                                    #         if (matchingElement) {
+                                    #             matchingElement.click();
+                                    #         }
+                                    #     """)
+                                    #     try:
+                                    #         # Wait for the <h2> element to become visible
+                                    #         WebDriverWait(self.browser, 10).until(
+                                    #             EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
+                                    #         )
+                                    #         print("Element is visible. Clicking Easy Apply button successful.")
+                                    #         break  # exit the While loop if the element is visible
+                                    #     except Exception as e:
+                                    #         print(f"Error: {e}")
+
+                                result: bool = self.send_resume()
+                                count_application += 1
+                            else:
+                                log.info("The button does not exist.")
+                                string_easy = "* Doesn't have Easy Apply Button"
+                                # TODO: job ID should be added to applied to, to avoid it being openend again, dones already, but keep this here, as it's another way know where to insert that
+                                result = False
+
+                            position_number: str = str(count_job + jobs_per_page)
+
+                            # Define a regular expression pattern to match non-UTF-8 characters
+                            non_utf8_pattern = re.compile(r'[^\x00-\x7F]+')
+
+                            # Remove or replace non-UTF-8 characters with a space
+                            cleaned_title = re.sub(non_utf8_pattern, ' ', self.browser.title)
+
+                            sanitisedBrowserTitle = cleaned_title.encode("utf-8").decode("utf-8")
+
+                            log.info(f"Position {position_number}:\n {sanitisedBrowserTitle} \n {string_easy} \n")
+
+                            self.write_to_file(easyApplyButton, jobID, sanitisedBrowserTitle, result)
+
+                            # go to new page if all jobs are done
+                            if count_job == len(IDs):                        
+                                # break right here in case last job was old, this will save another reload, and just speed thing up in general. If it matches, do a break statement, which will move onto the next job/location combo
+                                if any(phrase in last_link_text for phrase in ["week ago", 
+                                                                        "6 days ago", 
+                                                                        "5 days ago", 
+                                                                        "4 days ago", 
+                                                                        "3 days ago", 
+                                                                        # "2 days ago", 
+                                                                        "weeks ago", 
+                                                                        "month ago", 
+                                                                        "months ago"]):
+                                    log.debug("moving onto the next combo, due to no new jobs available to apply to for this combo")
+                                    break # this skips this job/location combo
+                                jobs_per_page = jobs_per_page + 25
+                                count_job = 0
+                                log.info("""****************************************\n\n
+                                Going to next jobs page, YEAAAHHH!!
+                                ****************************************\n\n""")
+                                self.browser, jobs_per_page = self.next_jobs_page(position,
+                                                                                location,
+                                                                                jobs_per_page)
             except Exception as e:
                 log.info(e)
 
@@ -463,7 +469,7 @@ class EasyApplyBot:
 
         timestamp: str = datetime.now().strftime('%d/%m/%Y %H:%M')
         attempted: bool = False if button == False else True
-        job = re_extract(browserTitle.split(' | ')[0], r"\(?\d?\)?\s?(\w.*)")
+        job = re_extract(browserTitle.split(' | ')[0], r"\(?\d?\)?\s?(\w.*)")#[:10]  # Limit job ID to 10 characters
         company = re_extract(browserTitle.split(' | ')[1], r"(\w.*)")
 
         toWrite: list = [timestamp, jobID, job, company, attempted, result]
@@ -487,10 +493,11 @@ class EasyApplyBot:
                     '//button[contains(@class, "jobs-apply-button")]'
                 )
                 easyApplyButton = button[1]
-                break # Exit the loop if button is found successfully
+                if easyApplyButton:
+                    break # Exit the loop if button is found successfully
             except IndexError: # this happens very rarely, it hapened only once after 1500 succesful applications
-                print("Button not found. Waiting for 30 seconds and trying again...")
-                time.sleep(30)  # Wait for 30 seconds before trying again
+                print("Button not found. Waiting for 2 seconds and trying again...")
+                time.sleep(2)  # Wait for 2 seconds before trying again
             except Exception as e: 
                 log.info("Exception:",e)
                 easyApplyButton = False
@@ -514,7 +521,7 @@ class EasyApplyBot:
                               "button[aria-label='Submit application']")
             submit_application_locator = (By.CSS_SELECTOR,
                                           "button[aria-label='Submit application']")
-            follow_locator = (By.CSS_SELECTOR, "label[for='follow-company-checkbox']")
+            # follow_locator = (By.CSS_SELECTOR, "label[for='follow-company-checkbox']")
             term_agree = (By.CSS_SELECTOR, "label[data-test-text-selectable-option__label='I Agree Terms & Conditions']")
 
             question_element = (By.XPATH, "//span[contains(text(), 'Will you now or in the future require sponsorship for employment visa status?')]")
@@ -545,11 +552,30 @@ class EasyApplyBot:
 
                 # Click Next or submitt button if possible
                 button: None = None
-                buttons: list = [next_locater, review_locater, follow_locator,
-                           submit_locater, submit_application_locator]
+                buttons: list = [next_locater, 
+                                 review_locater, 
+                                 #follow_locator, #good and works, but slows you down unecesserly, when following doesn't cause indentified harm
+                                 submit_locater, 
+                                 submit_application_locator]
                 for i, button_locator in enumerate(buttons):
                     if is_present(button_locator):
                         button: None = self.wait.until(EC.element_to_be_clickable(button_locator))
+
+                    succesfully_finished_submission = self.browser.find_elements(By.XPATH,
+                                                                                 "//span[@class='artdeco-button__text'][contains(text(), 'Done')]")
+                    
+                    succesfully_finished_submission_check2 = self.browser.find_elements(By.XPATH,
+                                                                                 "//span[@class='jpac-modal-header'][contains(text(), 'Your application was sent to')]")
+                    
+                    succesfully_finished_submission_check3 = self.browser.find_elements(By.XPATH,
+                                                                                 "//span[@class='t-black--light'][contains(text(), 'You can keep track of your application in the \"Applied\" tab of My Jobs')]")
+
+                    if (succesfully_finished_submission or 
+                        succesfully_finished_submission_check2 or 
+                        succesfully_finished_submission_check3
+                        ):
+                        submitted = True
+                        break
 
                     # Find the element with the class "artdeco-inline-feedback__message"
                     # Find all of the elements with the class "artdeco-inline-feedback__message"
@@ -613,12 +639,16 @@ class EasyApplyBot:
     #@profile
     def load_page(self, sleep=1):
         if sleep == 2:
-            scrollresults = self.browser.find_element(By.CLASS_NAME,
-                "jobs-search-results-list")
+            try:
+                scrollresults = self.browser.find_element(By.CLASS_NAME,
+                    "jobs-search-results-list")
+            except NoSuchElementException:  
+                self.browser.refresh()
+                scrollresults = self.browser.find_element(By.CLASS_NAME, "jobs-search-results-list")
             # Selenium only detects visible elements; if we scroll to the bottom too fast, only 8-9 results will be loaded into IDs list
             for i in range(300, 3600, 150): #potential for speeding up, just increase the last value gradually
                 self.browser.execute_script("arguments[0].scrollTo(0, {})".format(i), scrollresults)
-                time.sleep(0.3)
+                time.sleep(0.3) # otherwise it scrolls too fast
 
         page = BeautifulSoup(self.browser.page_source, "lxml")
         return page
@@ -676,12 +706,17 @@ if __name__ == '__main__':
     else:
         exit() #just incase if running from the VSC
 
-# log.debug("No links found")
-# figure out why you have ^ two of the above statements in your code. The code seem to be breaking also, perhaps because of that 
-#NOT (senior OR lead OR chief OR gas OR forklift OR lift OR fire OR electric OR air OR sprinkler OR HVAC OR construction OR mechanical)
-
 # make it run headless unless last login attempt lead to captcha, as a setting in the config.yaml
 
 # TODO: play around with auto filling fields which require a number with 0, as it will increase autocompletion rate of applications
 
-# TODO: compare with the LineProfiler, how much faster a headless version would be.
+# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.
+
+# for those two, handle it in a specific way, but for other problems, do a timer/count number of tries, then first refresh, and if that fails, move onto the next job
+    # handle situation where you have "No longer accepting applications" instead of an easy apply button, as the script became stuck in a loop looking for the easy apply button once
+
+    # if "Tunnel Connection Failed" refresh the website
+
+# right now, you're assesing how many applications applied to by one way of counting. Make sure for the script to be able to also pick up on other ways when for example easyapply button becomes grayed out due to applying to over 250 jobs/day. In those cases the script should exit both loops
+
+# looking if first job is not "weeks" old, should be done before even scrolling down, and if so, move to the next combo, although that will require serious reorganization of the code, and the current code works well, it's just that sub functionality could be improved to gain a few seconds if the combo is early discarded
