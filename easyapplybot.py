@@ -201,16 +201,17 @@ class EasyApplyBot:
         except TimeoutException:
             log.info("TimeoutException! Username/password field or login button not found")
 
-    #@profile
-    def start_apply(self, positions, locations) -> None:
         if "verification" in self.browser.title.lower():
             winsound.PlaySound("C:\Windows\Media\chimes.wav", winsound.SND_FILENAME)
             input("Press Enter to continue...") # pause the script in case of captcha type verification
             log.debug("captcha verification needed")
         # TODO: only have the above activated, if the title mean its a captcha verification
-        start: float = time.time()
         self.browser.maximize_window()
 
+    #@profile
+    def start_apply(self, positions, locations) -> None:
+        start: float = time.time()
+    
         # Define the CSV file name
         csv_combo_log_file = 'combos_output_log.csv'
 
@@ -311,9 +312,9 @@ class EasyApplyBot:
                     if any(phrase in first_link_text for phrase in ["week ago", 
                                                                     "6 days ago", 
                                                                     "5 days ago", 
-                                                                    "4 days ago", 
-                                                                    "3 days ago", 
-                                                                    # "2 days ago", 
+                                                                    #"4 days ago", 
+                                                                    #"3 days ago", 
+                                                                    #"2 days ago", 
                                                                     "weeks ago",  
                                                                     "month ago", 
                                                                     "months ago"]):
@@ -330,7 +331,12 @@ class EasyApplyBot:
                         rawLinksEasyApplyCount += 1
 
                         temp = link.get_attribute("data-job-id")#[:10]  # Limit job ID to 10 characters
-                        jobID = int(temp.split(":")[-1])
+                        if temp == "search":
+                            temp = link.get_attribute("data-job-id")
+                            if temp == 'search':
+                                continue #moving onto the next link
+                        jobID = int(temp)
+                        #jobID = int(temp.split(":")[-1])
 
                         if jobID not in self.appliedJobIDs: # be careful if they are both of the same type - string, mixed types won't work. Now it works.
                             self.appliedJobIDs.add(jobID)
@@ -368,9 +374,12 @@ class EasyApplyBot:
                             count_job += 1
                             self.get_job_page(jobID)
 
+                            while self.browser.find_elements(By.XPATH, "//*[contains(text(), 'We experienced an error loading this application. Save this job to try again later.')]"):
+                                self.get_job_page(jobID)
+
                             # get easy apply button
                             easyApplyButton = self.get_easy_apply_button()
-                            # word filter to skip positions not wanted
+
 
                             if easyApplyButton is not False:
                                 string_easy = "* has Easy Apply Button"
@@ -439,9 +448,9 @@ class EasyApplyBot:
                                 if any(phrase in last_link_text for phrase in ["week ago", 
                                                                         "6 days ago", 
                                                                         "5 days ago", 
-                                                                        "4 days ago", 
-                                                                        "3 days ago", 
-                                                                        # "2 days ago", 
+                                                                        #"4 days ago", 
+                                                                        #"3 days ago", 
+                                                                        #"2 days ago", 
                                                                         "weeks ago", 
                                                                         "month ago", 
                                                                         "months ago"]):
@@ -489,9 +498,13 @@ class EasyApplyBot:
     def get_easy_apply_button(self):
         while True:
             try:
+                if self.browser.find_elements(By.XPATH, "//*[contains(text(), 'No longer accepting applications')]"):
+                    easyApplyButton = False
+                    break
                 button = self.browser.find_elements("xpath",
                     '//button[contains(@class, "jobs-apply-button")]'
                 )
+
                 easyApplyButton = button[1]
                 if easyApplyButton:
                     break # Exit the loop if button is found successfully
@@ -562,13 +575,13 @@ class EasyApplyBot:
                         button: None = self.wait.until(EC.element_to_be_clickable(button_locator))
 
                     succesfully_finished_submission = self.browser.find_elements(By.XPATH,
-                                                                                 "//span[@class='artdeco-button__text'][contains(text(), 'Done')]")
+                                                                                 "//*[@class='artdeco-button__text'][contains(text(), 'Done')]")
                     
                     succesfully_finished_submission_check2 = self.browser.find_elements(By.XPATH,
-                                                                                 "//span[@class='jpac-modal-header'][contains(text(), 'Your application was sent to')]")
+                                                                                 "//*[@class='jpac-modal-header'][contains(text(), 'Your application was sent to')]")
                     
                     succesfully_finished_submission_check3 = self.browser.find_elements(By.XPATH,
-                                                                                 "//span[@class='t-black--light'][contains(text(), 'You can keep track of your application in the \"Applied\" tab of My Jobs')]")
+                                                                                 "//*[@class='t-black--light'][contains(text(), 'You can keep track of your application in the \"Applied\" tab of My Jobs')]")
 
                     if (succesfully_finished_submission or 
                         succesfully_finished_submission_check2 or 
@@ -712,11 +725,22 @@ if __name__ == '__main__':
 
 # TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.
 
-# for those two, handle it in a specific way, but for other problems, do a timer/count number of tries, then first refresh, and if that fails, move onto the next job
-    # handle situation where you have "No longer accepting applications" instead of an easy apply button, as the script became stuck in a loop looking for the easy apply button once
+# handle it in a specific way, but for other problems, do a timer/count number of tries, then first refresh, and if that fails, move onto the next job
 
     # if "Tunnel Connection Failed" refresh the website
 
 # right now, you're assesing how many applications applied to by one way of counting. Make sure for the script to be able to also pick up on other ways when for example easyapply button becomes grayed out due to applying to over 250 jobs/day. In those cases the script should exit both loops
 
 # looking if first job is not "weeks" old, should be done before even scrolling down, and if so, move to the next combo, although that will require serious reorganization of the code, and the current code works well, it's just that sub functionality could be improved to gain a few seconds if the combo is early discarded
+
+# <h3 class="jpac-modal-header t-20 t-bold pt0 pb2">
+#     Your application was sent to Ciphr!
+#   </h3>
+
+# ________________
+
+# <div class="t-14 t-black--light text-align-center mh8">You can keep track of your application in the "Applied" tab of My Jobs</div>
+
+# todo: 
+# make another setting for setting the distance in miles, from the location
+# 		have this set via YAML
