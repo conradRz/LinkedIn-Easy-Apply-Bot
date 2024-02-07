@@ -206,7 +206,9 @@ class EasyApplyBot:
             input("Press Enter to continue...") # pause the script in case of captcha type verification
             log.debug("captcha verification needed")
         # TODO: only have the above activated, if the title mean its a captcha verification
-        self.browser.maximize_window()
+        
+        # the below is most unecessery processing
+        # self.browser.maximize_window()
 
     #@profile
     def start_apply(self, positions, locations) -> None:
@@ -498,6 +500,8 @@ class EasyApplyBot:
     def get_easy_apply_button(self):
         while True:
             try:
+                if self.browser.find_elements(By.XPATH, "//*[contains(text(), 'Something went wrong')]"):
+                    self.browser.refresh()
                 if self.browser.find_elements(By.XPATH, "//*[contains(text(), 'No longer accepting applications')]"):
                     easyApplyButton = False
                     break
