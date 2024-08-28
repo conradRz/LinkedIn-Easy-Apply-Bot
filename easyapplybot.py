@@ -22,13 +22,27 @@ from datetime import date, datetime, timedelta
 from selenium.webdriver.common.action_chains import ActionChains
 import subprocess
 from os import path
-# from line_profiler import LineProfiler # it's for profiling program efficiency and timing it's execution line by line. Connected to #@profile . First $ kernprof -l .\easyapplybot.py -> Then $ python -m line_profiler .\easyapplybot.py.lprof > output.txt to generate output
+from line_profiler import LineProfiler # it's for profiling program efficiency and timing it's execution line by line. Connected to #@profile . First $ kernprof -l .\easyapplybot.py -> Then $ python -m line_profiler .\easyapplybot.py.lprof > output.txt to generate output
 
 
 log = logging.getLogger(__name__)
 
-service = Service(executable_path = path.dirname(__file__) + r"\assets\chromedriver.exe")
-driver = webdriver.Chrome(service=service) # if you do just 
+#chrome_path = path.dirname(__file__) + r"\assets\chrome-win64\chrome-win64\chrome.exe" # Specify the path to the Chrome executable
+
+options = Options()
+#options.binary_location = chrome_path
+
+# #the below enabled headless mode (enabled 22:13 16/7/2024 - for performance stats)
+# options.add_argument("--headless")
+# options.add_argument("--disable-gpu")  # May be needed for Windows
+# #options.add_argument("--no-sandbox")  # Required for some environments 
+# options.add_argument("--disable-extensions")  # Disable extensions
+# options.add_argument("--disable-browser-side-navigation")
+
+executable_path = path.dirname(__file__) + r"\assets\chromedriver.exe"
+
+service = Service(executable_path = path.dirname(__file__) + r"\assets\chromedriver.exe") #https://googlechromelabs.github.io/chrome-for-testing/
+driver = webdriver.Chrome(options=options, service=service) # if you do just 
 # driver = webdriver.Chrome() 
 # you will sometimes get the below, if you use driver = webdriver.Chrome(), this might be because they don't keep on top of things
 
@@ -71,7 +85,7 @@ def get_process_id(process_name):
   """
 
   # Get all running processes.
-  processes = subprocess.check_output(["wmic", "process", "get", "processid,commandline"]).decode("utf-8").splitlines()
+  processes = subprocess.check_output(["wmic", "process", "get", "processid,commandline"]).decode("latin-1").splitlines()
 
   # Find the process with the given name.
   for process in processes:
@@ -96,8 +110,8 @@ def terminate_process(process_id):
 
 class EasyApplyBot:
     setupLogger()
-    # MAX_SEARCH_TIME is 10 hours by default, feel free to modify it
-    MAX_SEARCH_TIME = 10 * 60 * 60
+    # MAX_SEARCH_TIME is 12 hours by default, feel free to modify it
+    MAX_SEARCH_TIME = 12 * 60 * 60
     # LinkedIn limits how many you can apply to per day. After that it doesn't allow one to click the easy apply button
     MAX_ALLOWED_POSITIONS_TO_APPLY_TO_PER_DAY = 249
 
@@ -109,15 +123,12 @@ class EasyApplyBot:
                  blacklist={},
                  blackListTitles={}) -> None:
 
-        dirpath: str = os.getcwd()
-        log.info("current directory is : " + dirpath)
-
         past_ids: set | None = self.get_appliedIDs(filename)
         self.appliedJobIDs: set = past_ids if past_ids != None else {}
         self.filename: str = filename
         self.options = self.browser_options()
         self.browser = driver
-        self.wait = WebDriverWait(self.browser, 30)
+        self.wait = WebDriverWait(self.browser, 45)
         self.blacklist = blacklist
         self.blackListTitles = blackListTitles
         self.start_linkedin(username, password)
@@ -126,17 +137,23 @@ class EasyApplyBot:
     def get_appliedIDs(self, filename) -> set | None:
         try:
             df = pd.read_csv(filename,
-                             header=None,
-                             names=['timestamp', 
+                            header=None,
+                            names=['timestamp', 
                                     'jobID', 
                                     'job', 
                                     'company', 
                                     'attempted', 
                                     'result'],
-                             lineterminator=None,
-                             encoding='Windows-1252')
-
+                            lineterminator=None, #If you're not dealing with a specific case of line terminators, it's better to leave lineterminator as None and let pandas automatically handle line endings.
+                            # parse_dates=['timestamp'],  # Parse the 'timestamp' column as datetime
+                            # date_parser=lambda x: pd.to_datetime(x, format="%d/%m/%Y %H:%M"),  # Custom parser for the date format
+                            #dtype={'jobID': 'int64'},
+                            encoding='Windows-1252',
+                            engine='c',  # Use the faster C engine
+                            )
+            
             df['timestamp'] = pd.to_datetime(df['timestamp'], format="%d/%m/%Y %H:%M")
+
             df = df[df['timestamp'] > (datetime.now() - timedelta(days=14))]
 
             today = date.today()
@@ -192,10 +209,10 @@ class EasyApplyBot:
             login_button = self.browser.find_element("xpath",
                         '//*[@id="organic-div"]/form/div[3]/button')
             user_field.send_keys(username)
-            user_field.send_keys(Keys.TAB)
-            time.sleep(2)
+            #user_field.send_keys(Keys.TAB)
+            #time.sleep(2)
             pw_field.send_keys(password)
-            time.sleep(2)
+            #time.sleep(2)
             login_button.click()
             time.sleep(3)
         except TimeoutException:
@@ -205,22 +222,17 @@ class EasyApplyBot:
             winsound.PlaySound("C:\Windows\Media\chimes.wav", winsound.SND_FILENAME)
             input("Press Enter to continue...") # pause the script in case of captcha type verification
             log.debug("captcha verification needed")
-        # TODO: only have the above activated, if the title mean its a captcha verification
-        
-        # the below is most unecessery processing
-        # self.browser.maximize_window()
 
     #@profile
     def start_apply(self, positions, locations) -> None:
-        start: float = time.time()
-    
         # Define the CSV file name
         csv_combo_log_file = 'combos_output_log.csv'
 
-        df = pd.read_csv(csv_combo_log_file, names=['Date', 'Combo'])
-
-        # Convert the 'Date' column to datetime objects
-        df['Date'] = pd.to_datetime(df['Date'], format='%d/%m/%Y %H:%M')
+        df = pd.read_csv(csv_combo_log_file, 
+                         names=['Date', 'Combo'], 
+                         parse_dates=['Date'],
+                         date_parser=lambda x: pd.to_datetime(x, format='%d/%m/%Y %H:%M')
+                         )
 
         # Get the current date and time
         current_datetime = datetime.now()
@@ -266,8 +278,6 @@ class EasyApplyBot:
 
                     # Log the combo along with the current date and time to the CSV file
                     writer.writerow([current_datetime, combo])
-            # if len(combos) > 500:
-            #     break
 
     #@profile
     def applications_loop(self, position, location):
@@ -309,12 +319,13 @@ class EasyApplyBot:
                                                                     jobs_per_page)
                     # break #that will move onto the next combo, but that's not what we want, we want to go into the next page instead
 
-                else: # we have some links, but first one of them are over 1 week old, then skip this job/location combo, and move to the next one # TODO: would be to add this to config.yaml as an option
-                    first_link_text = links[0].text
+                else: # we have some links, but first one of them are over 1 week old, then skip this job/location combo, and move to the next one # TODO: would be beneficial to add this to config.yaml as an option
+                    # raw links[0].text is like 'Senior QA Automation Engineer\nSenior QA Automation Engineer\nWeDo \nUnited Kingdom (Remote)\n£70K/yr - £75K/yr\nActively recruiting\n3 days ago\nEasy Apply'
+                    first_link_text = links[0].text.split('\n')[-2]
                     if any(phrase in first_link_text for phrase in ["week ago", 
                                                                     "6 days ago", 
                                                                     "5 days ago", 
-                                                                    #"4 days ago", 
+                                                                    "4 days ago", 
                                                                     #"3 days ago", 
                                                                     #"2 days ago", 
                                                                     "weeks ago",  
@@ -342,9 +353,10 @@ class EasyApplyBot:
 
                         if jobID not in self.appliedJobIDs: # be careful if they are both of the same type - string, mixed types won't work. Now it works.
                             self.appliedJobIDs.add(jobID)
-                            # Extract the first two lines, as the whole thing has such a format "Automation Consultant/Architect\njaam automation\nUnited Kingdom (Remote)\nActively recruiting\n2 days ago\nEasy Apply"
-                            inputTextJobTitle = link.text.lower().split('\n')[0]
-                            inputTextCompanyBlacklist = link.text.lower().split('\n')[1]
+                            # Extract what is needed (once they changed this on their end..., and you needed to change [1] to [2])
+                            lines = link.text.lower().split('\n')
+                            inputTextJobTitle = lines[0]
+                            inputTextCompanyBlacklist = lines[2]
 
                             if not (any(phrase in inputTextJobTitle for phrase in self.blackListTitles) 
                                     or 
@@ -480,8 +492,12 @@ class EasyApplyBot:
 
         timestamp: str = datetime.now().strftime('%d/%m/%Y %H:%M')
         attempted: bool = False if button == False else True
-        job = re_extract(browserTitle.split(' | ')[0], r"\(?\d?\)?\s?(\w.*)")#[:10]  # Limit job ID to 10 characters
-        company = re_extract(browserTitle.split(' | ')[1], r"(\w.*)")
+        # Split the browserTitle once and store the results
+        parts = browserTitle.split(' | ')
+
+        # Extract job ID and company information with regular expressions
+        job = re_extract(parts[0], r"\(?\d?\)?\s?(\w.*)")[:10]  # Limit job ID to 10 characters
+        company = re_extract(parts[1], r"(\w.*)")
 
         toWrite: list = [timestamp, jobID, job, company, attempted, result]
         with open(self.filename, 'a', newline='') as f:
@@ -505,9 +521,11 @@ class EasyApplyBot:
                 if self.browser.find_elements(By.XPATH, "//*[contains(text(), 'No longer accepting applications')]"):
                     easyApplyButton = False
                     break
+
+                self.wait.until(EC.presence_of_all_elements_located((By.XPATH, '//button[contains(@class, "jobs-apply-button")]')))
                 button = self.browser.find_elements("xpath",
                     '//button[contains(@class, "jobs-apply-button")]'
-                )
+                    )
 
                 easyApplyButton = button[1]
                 if easyApplyButton:
@@ -515,9 +533,12 @@ class EasyApplyBot:
             except IndexError: # this happens very rarely, it hapened only once after 1500 succesful applications
                 print("Button not found. Waiting for 2 seconds and trying again...")
                 time.sleep(2)  # Wait for 2 seconds before trying again
+                easyApplyButton = False
+                break
             except Exception as e: 
                 log.info("Exception:",e)
                 easyApplyButton = False
+                break
 
         return easyApplyButton        
 
@@ -656,23 +677,46 @@ class EasyApplyBot:
     #@profile
     def load_page(self, sleep=1):
         if sleep == 2:
+            self.wait.until(lambda driver: self.browser.execute_script('return document.readyState') == 'complete')
+
             try:
                 scrollresults = self.browser.find_element(By.CLASS_NAME,
                     "jobs-search-results-list")
             except NoSuchElementException:  
                 self.browser.refresh()
+                scrollresults = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "jobs-search-results-list")))
                 scrollresults = self.browser.find_element(By.CLASS_NAME, "jobs-search-results-list")
-            # Selenium only detects visible elements; if we scroll to the bottom too fast, only 8-9 results will be loaded into IDs list
-            for i in range(300, 3600, 150): #potential for speeding up, just increase the last value gradually
-                self.browser.execute_script("arguments[0].scrollTo(0, {})".format(i), scrollresults)
-                time.sleep(0.3) # otherwise it scrolls too fast
 
-        page = BeautifulSoup(self.browser.page_source, "lxml")
-        return page
+            # Detect if it says on the website "No matching jobs found", if so, don't waste time on scrolling the search results
+            try:
+                if "No matching jobs found" in self.browser.page_source:
+                    # return BeautifulSoup(self.browser.page_source, "lxml")
+                    return
+                
+            except NoSuchElementException:
+                # No "No matching jobs found" message was found, continue with scrolling
+                pass
+
+            # in case of just one result no scrolling is necessery 
+            # Max number of results is 25 (on one page, but technically it can say in text 143 results, it will be just multiple pages), and currently you have 21 scrolls to scroll it fully, and that works perfectly. The scrolling code works perfect, don't change, it's efficient
+            if not self.browser.find_elements(By.XPATH, "//*[contains(text(), '1 result')]"):
+                # Regular expression to find the pattern and extract the number
+                pattern = r'"USER_LOCALE","text":"(\d+) results"'
+                # Search for the first match in the page source
+                match = re.search(pattern, self.browser.page_source)
+                result = int(match.group(1)) if match and int(match.group(1)) <= 19 else 20
+                # Selenium only detects visible elements; if we scroll to the bottom too fast, only 8-9 results will be loaded into IDs list
+                for i in range(300, result*150+300, 150): #potential for speeding up, just increase the last value gradually
+                    self.browser.execute_script("arguments[0].scrollTo(0, {})".format(i), scrollresults)
+                    time.sleep(0.3) # otherwise it scrolls too fast
+
+        return BeautifulSoup(self.browser.page_source, "lxml")
 
     #@profile
     def next_jobs_page(self, position, location, jobs_per_page):
-        self.load_page_and_wait_until_it_stops_loading("https://www.linkedin.com/jobs/search/?f_LF=f_AL" + "&distance=5" + "&keywords=" +
+        #"&f_AL=true" makes sure only easy apply jobs appear
+        #"&sortBy=DD" sorts by the most recent
+        self.load_page_and_wait_until_it_stops_loading("https://www.linkedin.com/jobs/search/?f_LF=f_AL" + "&f_AL=true" + "&keywords=" +
             position + location + "&sortBy=DD" + "&start=" + str(jobs_per_page))
             
         # todo: now that would be a good call to do that scrolling thing, of the left pane
@@ -727,7 +771,9 @@ if __name__ == '__main__':
 
 # TODO: play around with auto filling fields which require a number with 0, as it will increase autocompletion rate of applications
 
-# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.# TODO: compare with the LineProfiler, how much faster a headless version would be.
+# TODO: searching for jobs should happen in parrarel, in other tab, as you're applying to jobs in another tab, to make applying to jobs faster
+
+# TODO: compare with the LineProfiler, how much faster a headless version would be.
 
 # handle it in a specific way, but for other problems, do a timer/count number of tries, then first refresh, and if that fails, move onto the next job
 
@@ -744,7 +790,3 @@ if __name__ == '__main__':
 # ________________
 
 # <div class="t-14 t-black--light text-align-center mh8">You can keep track of your application in the "Applied" tab of My Jobs</div>
-
-# todo: 
-# make another setting for setting the distance in miles, from the location
-# 		have this set via YAML
