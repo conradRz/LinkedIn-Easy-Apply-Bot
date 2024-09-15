@@ -1,20 +1,24 @@
-username:
-password:
+username: 
+password: 
+phoneNumber: 
 
 # https://www.linkedin.com/help/linkedin/answer/a524335
 # ^ Use Boolean search on LinkedIn
 # it prefilters results, making things faster and using less resources
 # the boolean search doesn't filter out the promoted listings, even if they do include those NOT strings, therefore in the code I have another filter - for a good reason!
-# their boolean search is spotty. Put too many phrases - no results. Put NOT ("lead" OR "senior") or NOT (lead OR senior) - widely different results by a magnitude of 4. Don't relay on it.
+# their boolean search is spotty. Put NOT ("lead" OR "senior") or NOT (lead OR senior) - widely different results by a magnitude of 4. Don't relay on it, that's why in the code there is another blacklist
 
-positions:
-  - Python
-  -  # Another position you want to search for
+positions: # OR has to uppercase, lowercase won't work with linkedin
+  - Programmer OR Developer
 
 locations: # linkedin doesn't seem to support boolean searches (OR for example) for the location field, so they have to be separate searches
-  - Remote
-  - Edinburgh, Scotland, United Kingdom
-  -  # A second location you want to search in
+  #adding &f_WT=3 makes sure it will apply only to hybrid jobs in that location, &f_WT=1%2C3 is hybrid and on location, excluding remote for a good reason - as those will be from all over UK
+  #adding &distance=5 allows you to control distance in miles per location
+  #adding &f_TPR=r604800 allow only jobs posted within a week
+  #adding &f_WT=2 displays only remote jobs, and provides the same number of results as if searching for location=Remote
+  #adding &E=1%2C2%2C3%2C4%2C6 excludes "Director" level of experience
+  - United Kingdom&f_TPR=r604800&f_WT=2&E=1%2C2%2C3%2C4%2C6
+  - Ireland&f_TPR=r604800&f_WT=2&E=1%2C2%2C3%2C4%2C6
 
 # --------- Optional Parameters -------
 # output_filename:
