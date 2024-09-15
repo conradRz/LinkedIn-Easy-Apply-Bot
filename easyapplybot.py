@@ -22,7 +22,7 @@ from datetime import date, datetime, timedelta
 from selenium.webdriver.common.action_chains import ActionChains
 import subprocess
 from os import path
-from line_profiler import LineProfiler # it's for profiling program efficiency and timing it's execution line by line. Connected to #@profile . First $ kernprof -l .\easyapplybot.py -> Then $ python -m line_profiler .\easyapplybot.py.lprof > output.txt to generate output
+from line_profiler import LineProfiler # it's for profiling program efficiency and timing it's execution line by line. Connected to #@profile . First $ kernprof -l .\easyapplybot.py -> Then $ python -m line_profiler .\easyapplybot.py.lprof > output.txt to generate output. To get timings in seconds on that output file, multiply them by [time]×0.000001
 
 
 log = logging.getLogger(__name__)
@@ -30,12 +30,13 @@ log = logging.getLogger(__name__)
 #chrome_path = path.dirname(__file__) + r"\assets\chrome-win64\chrome-win64\chrome.exe" # Specify the path to the Chrome executable
 
 options = Options()
+options.add_argument('--log-level=3')
 #options.binary_location = chrome_path
 
 # #the below enabled headless mode (enabled 22:13 16/7/2024 - for performance stats)
 # options.add_argument("--headless")
 # options.add_argument("--disable-gpu")  # May be needed for Windows
-# #options.add_argument("--no-sandbox")  # Required for some environments 
+# options.add_argument("--no-sandbox")  # Required for some environments 
 # options.add_argument("--disable-extensions")  # Disable extensions
 # options.add_argument("--disable-browser-side-navigation")
 
@@ -50,6 +51,12 @@ driver = webdriver.Chrome(options=options, service=service) # if you do just
 # Message: Unable to obtain chromedriver using Selenium Manager; Message: Unsuccessful command executed: C:\Users\User\AppData\Local\Programs\Python\Python39\lib\site-packages\selenium\webdriver\common\windows\selenium-manager.exe --browser chrome --output json.
 # The chromedriver version cannot be discovered
 # ; For documentation on this error, please visit: https://www.selenium.dev/documentation/webdriver/troubleshooting/errors/driver_location
+
+# Enable the Network domain to block URLs
+driver.execute_cdp_cmd("Network.enable", {})
+
+# Block requests from 'media.licdn.com' which is only pics (profile and compnay logos)
+driver.execute_cdp_cmd("Network.setBlockedURLs", {"urls": ["*://media.licdn.com/*"]})
 
 num_successful_jobs_global_variable = 0
 
@@ -119,6 +126,7 @@ class EasyApplyBot:
     def __init__(self,
                  username,
                  password,
+                 phoneNumber,
                  filename='output.csv',
                  blacklist={},
                  blackListTitles={}) -> None:
@@ -131,6 +139,7 @@ class EasyApplyBot:
         self.wait = WebDriverWait(self.browser, 45)
         self.blacklist = blacklist
         self.blackListTitles = blackListTitles
+        self.phoneNumber = phoneNumber
         self.start_linkedin(username, password)
 
     #@profile
@@ -209,12 +218,13 @@ class EasyApplyBot:
             login_button = self.browser.find_element("xpath",
                         '//*[@id="organic-div"]/form/div[3]/button')
             user_field.send_keys(username)
-            #user_field.send_keys(Keys.TAB)
-            #time.sleep(2)
             pw_field.send_keys(password)
-            #time.sleep(2)
+            # Wait for the link to be clickable and then click it
+            WebDriverWait(self.browser, 10, poll_frequency=0.2).until(
+                EC.element_to_be_clickable(login_button)
+            )
             login_button.click()
-            time.sleep(3)
+            #time.sleep(3)
         except TimeoutException:
             log.info("TimeoutException! Username/password field or login button not found")
 
@@ -237,18 +247,18 @@ class EasyApplyBot:
         # Get the current date and time
         current_datetime = datetime.now()
 
-        # Calculate the timestamp 24 hours ago from the current date and time
-        twenty_four_hours_ago = current_datetime - timedelta(hours=24)
+        # Calculate the timestamp 48 hours ago from the current date and time
+        forty_eight_hours_ago = current_datetime - timedelta(hours=48)
 
-        # Filter rows based on timestamp within the last 24 hours
-        filtered_df = df[df['Date'] > twenty_four_hours_ago]
+        # Filter rows based on timestamp within the last 48 hours
+        filtered_df = df[df['Date'] > forty_eight_hours_ago]
 
         # Extract the 'Combo' values into a list of tuples
-        combos_within_last_24_hours = list(filtered_df['Combo'])
-        combos_within_last_24_hours = [tuple(eval(combo)) for combo in combos_within_last_24_hours]
+        combos_within_last_48_hours = list(filtered_df['Combo'])
+        combos_within_last_48_hours = [tuple(eval(combo)) for combo in combos_within_last_48_hours]
 
         # Now convert the list of tuples to a tuple
-        combos_within_last_24_hours = tuple(combos_within_last_24_hours)
+        combos_within_last_48_hours = tuple(combos_within_last_48_hours)
         
         combos: list = []
         while len(combos) < len(positions) * len(locations):
@@ -257,7 +267,7 @@ class EasyApplyBot:
             combo: tuple = (position, location)
             if combo not in combos:
                 combos.append(combo)
-                if combo not in combos_within_last_24_hours:
+                if combo not in combos_within_last_48_hours:
                     # log.debug(f"Combos already applied to: {combos}")
                     log.debug(f"Number of job/location combos already applied to: {len(combos)}")
                     log.debug(f"All possible job/location combos given the config.yaml file: {len(positions) * len(locations)}")
@@ -285,6 +295,8 @@ class EasyApplyBot:
         count_application = 0
         count_job = 0
         jobs_per_page = 0
+        inputTextJobTitle = ''
+        inputTextCompanyTitle = ''
         start_time: float = time.time()
 
         self.browser, _ = self.next_jobs_page(position, location, jobs_per_page)
@@ -302,14 +314,32 @@ class EasyApplyBot:
                     log.debug("No matching jobs found. Moving onto next job/location combo")
                     break
 
+
+                container = self.browser.find_element("css selector", "#main > div > div.scaffold-layout__list-detail-inner.scaffold-layout__list-detail-inner--grow > div.scaffold-layout__list > div > ul")
                 # get job links, (the following are actually the job card objects)
-                links = self.browser.find_elements("xpath",
-                                                   '//div[@data-job-id and .//text()[contains(., "Easy Apply")]]'
-                )
+
+                links = container.find_elements("xpath", './/div[@data-job-id and .//text()[contains(., "Easy Apply")]]')
 
                 if len(links) == 0:
                     log.debug("No links found")
                     jobs_per_page = jobs_per_page + 25
+                                        #if jobs_per_page is <= than "results" then abandon, and move on to the next combo
+                    # Locate the element and get the text
+                    element = self.browser.find_element(By.XPATH, '//*[@id="main"]/div/div[2]/div[1]/header/div[1]/small/div/span')
+                    text = element.text
+
+                    # Remove " results" or " result" from the text
+                    if " results" in text:
+                        text = text.replace(" results", "").replace(",", "")
+                    elif " result" in text:
+                        text = text.replace(" result", "").replace(",", "")
+                    
+                    # Convert the cleaned text to a number
+                    number = int(text)
+
+                    if jobs_per_page >= number:
+                        # it would break and move onto the next combo
+                        break
                     count_job = 0
                     log.info("""****************************************\n\n
                     Going to next jobs page, YEAAAHHH!!
@@ -328,135 +358,168 @@ class EasyApplyBot:
                                                                     "4 days ago", 
                                                                     #"3 days ago", 
                                                                     #"2 days ago", 
-                                                                    "weeks ago",  
-                                                                    "month ago", 
-                                                                    "months ago"]):
+                                                                    #"weeks ago",  
+                                                                    #"month ago", 
+                                                                    #"months ago"
+                                                                    ]):
                         log.debug("moving onto the next combo, due to no new jobs available to apply to for this combo")
                         break # this skips this job/location combo
 
                     last_link_text = links[-1].text # don't put this further down, as you will then get StaleElementReferenceException(). Also don't do last_link = links[-1] as that would be reference assignment only, and not hold a copy
 
-                    rawLinksEasyApplyCount = 0
-                    IDs = set() # type set on purpose, as they won't be repeating themselves
-                    
+                    IDs = {} # dictionary on purpose, as they won't be repeating themselves, and pairs of values are required
+
                     # children selector is the container of the job cards on the left
                     for link in links:
-                        rawLinksEasyApplyCount += 1
-
                         temp = link.get_attribute("data-job-id")#[:10]  # Limit job ID to 10 characters
                         if temp == "search":
                             temp = link.get_attribute("data-job-id")
                             if temp == 'search':
                                 continue #moving onto the next link
                         jobID = int(temp)
-                        #jobID = int(temp.split(":")[-1])
 
                         if jobID not in self.appliedJobIDs: # be careful if they are both of the same type - string, mixed types won't work. Now it works.
                             self.appliedJobIDs.add(jobID)
                             # Extract what is needed (once they changed this on their end..., and you needed to change [1] to [2])
                             lines = link.text.lower().split('\n')
-                            inputTextJobTitle = lines[0]
-                            inputTextCompanyBlacklist = lines[2]
+                            
+                            # Use try-except to handle any index issues with the lines
+                            try:
+                                inputTextJobTitle = lines[0]
+                                inputTextCompanyTitle = lines[2]
+                            except IndexError:
+                                continue
 
                             if not (any(phrase in inputTextJobTitle for phrase in self.blackListTitles) 
                                     or 
-                                    any(phrase in inputTextCompanyBlacklist for phrase in self.blacklist)):                          
+                                    any(phrase in inputTextCompanyTitle for phrase in self.blacklist)):                          
                                     # Symmetric Difference (symmetric_difference):
                                         # Returns a new set containing elements that are present in either of the sets, but not in both. DON'T DO IT, union in this case is an equivalent. Symetric difference cannot handle strings, union can
-                                IDs.add(jobID)
+                                #IDs.add(jobID)
+                                IDs[jobID] = link
 
-                    log.info("it found this many job IDs with EasyApply button: %s", rawLinksEasyApplyCount)
-            
-                    length_of_ids = len(IDs)
-                    log.info("it found this many job IDs with EasyApply button and not containing any blacklisted phrases, as well as filtration of already applied to jobs: %s", length_of_ids)
-                    # # remove already applied jobs
-                    # jobIDs = set(IDs).difference(self.appliedJobIDs)
-                    # # given how the script works now, it should be the same number to this print and the above print, unless you also implement filtration by the job titles without opening the thing  
-                    # log.info("This many job IDs passed filtration: %s", len(jobIDs))
+                    log.info("it found this many job IDs with EasyApply button: %s", len(links))
+
+                    log.info("it found this many job IDs with EasyApply button and not containing any blacklisted phrases, as well as filtration of already applied to jobs: %s", len(IDs))
 
                     # assumes it didn't find any suitable job, moving onto the next page
                     if len(IDs) == 0:
                         jobs_per_page = jobs_per_page + 25
+
+                        #if jobs_per_page is <= than "results" then abandon, and move on to the next combo
+                        # Locate the element and get the text
+                        element = self.browser.find_element(By.XPATH, '//*[@id="main"]/div/div[2]/div[1]/header/div[1]/small/div/span')
+                        text = element.text
+
+                        # Remove " results" or " result" from the text
+                        if " results" in text:
+                            text = text.replace(" results", "").replace(",", "")
+                        elif " result" in text:
+                            text = text.replace(" result", "").replace(",", "")
+                        
+                        # Convert the cleaned text to a number
+                        number = int(text)
+
+                        if jobs_per_page >= number:
+                            # it would break and move onto the next combo
+                            break
+
                         count_job = 0
                         self.browser, jobs_per_page = self.next_jobs_page(position,
                                                                         location,
                                                                         jobs_per_page)
                     else:
+                        # here it should just start appllying since it's still on the right page
+
+
                         # loop over IDs to apply
                         # although _ doesn't seem used, don't delete it. It's there for a reason
-                        for _, jobID in enumerate(IDs):
+                        #for _, jobID in enumerate(IDs):
+                        for jobID, link in IDs.items():
                             count_job += 1
-                            self.get_job_page(jobID)
+                            
+                            if count_job > 1:
+                                try:
+                                    # Wait for the dismiss button to be clickable and click it
+                                    dismiss_button = WebDriverWait(driver, 5, poll_frequency=0.2).until(
+                                        EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Dismiss']"))
+                                    )
+                                    dismiss_button.click()
+                                except (NoSuchElementException, TimeoutException):
+                                    pass 
+                                try:
+                                    # Wait for the discard button to be clickable and click it
+                                    discard_button = WebDriverWait(self.browser, 5, poll_frequency=0.2).until(
+                                        EC.element_to_be_clickable((By.XPATH, "//button[@data-control-name='discard_application_confirm_btn']"))
+                                    )
+                                    discard_button.click()
+                                except (NoSuchElementException, TimeoutException):
+                                    pass
 
-                            while self.browser.find_elements(By.XPATH, "//*[contains(text(), 'We experienced an error loading this application. Save this job to try again later.')]"):
-                                self.get_job_page(jobID)
+                            time.sleep(random.uniform(1.5, 2.5))
+                            link.click()
+                            try:
+                                # Wait for the link to be clickable and then click it
+                                WebDriverWait(self.browser, 10, poll_frequency=0.2).until(
+                                    EC.element_to_be_clickable(link)
+                                )
+                                link.click()
+                            except (NoSuchElementException, TimeoutException):
+                                pass
 
                             # get easy apply button
                             easyApplyButton = self.get_easy_apply_button()
 
+                            exit = False
 
                             if easyApplyButton is not False:
-                                string_easy = "* has Easy Apply Button"
                                 log.info("Clicking the EASY apply button")
 
                                 while True:
                                     try:
                                         if easyApplyButton.is_enabled():
-                                            easyApplyButton.click()
+                                            try:
+                                                # Wait for the link to be clickable and then click it
+                                                WebDriverWait(self.browser, 10, poll_frequency=0.2).until(
+                                                    EC.element_to_be_clickable(easyApplyButton)
+                                                )
+                                                easyApplyButton.click()
+                                            except (NoSuchElementException, TimeoutException):
+                                                pass
                                             try:
                                                 # Wait for the <h2> element to become visible
-                                                WebDriverWait(self.browser, 10).until(
+                                                WebDriverWait(self.browser, 20).until(
                                                     EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
                                                 )
                                                 print("Element is visible. Clicking Easy Apply button successful.")
                                                 break  # exit the While loop if the element is visible
                                             except Exception as e:
                                                 print(f"Error: {e}")
+                                                dismiss_button = WebDriverWait(driver, 5, poll_frequency=0.2).until(EC.element_to_be_clickable((By.XPATH, "//button[@aria-label='Dismiss']")))
+                                                dismiss_button.click()
+                                                time.sleep(random.uniform(1.5, 2.5))
+                                                exit = True
+                                                break
+                                
                                     except StaleElementReferenceException:
                                         # If the element is stale, try to find it again
                                         easyApplyButton = self.get_easy_apply_button()
                                         continue
-                                    # else:
-                                    #     self.browser.execute_script("""
-                                    #         let xpathExpression = '//button[contains(@class, "jobs-apply-button")]';
-                                    #         let matchingElement = document.evaluate(xpathExpression, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
-                                    #         if (matchingElement) {
-                                    #             matchingElement.click();
-                                    #         }
-                                    #     """)
-                                    #     try:
-                                    #         # Wait for the <h2> element to become visible
-                                    #         WebDriverWait(self.browser, 10).until(
-                                    #             EC.visibility_of_element_located((By.ID, "jobs-apply-header"))
-                                    #         )
-                                    #         print("Element is visible. Clicking Easy Apply button successful.")
-                                    #         break  # exit the While loop if the element is visible
-                                    #     except Exception as e:
-                                    #         print(f"Error: {e}")
 
+                                if exit:
+                                    break
+                                
                                 result: bool = self.send_resume()
                                 count_application += 1
                             else:
                                 log.info("The button does not exist.")
-                                string_easy = "* Doesn't have Easy Apply Button"
                                 # TODO: job ID should be added to applied to, to avoid it being openend again, dones already, but keep this here, as it's another way know where to insert that
                                 result = False
 
-                            position_number: str = str(count_job + jobs_per_page)
-
-                            # Define a regular expression pattern to match non-UTF-8 characters
-                            non_utf8_pattern = re.compile(r'[^\x00-\x7F]+')
-
-                            # Remove or replace non-UTF-8 characters with a space
-                            cleaned_title = re.sub(non_utf8_pattern, ' ', self.browser.title)
-
-                            sanitisedBrowserTitle = cleaned_title.encode("utf-8").decode("utf-8")
-
-                            log.info(f"Position {position_number}:\n {sanitisedBrowserTitle} \n {string_easy} \n")
-
-                            self.write_to_file(easyApplyButton, jobID, sanitisedBrowserTitle, result)
+                            self.write_to_file(easyApplyButton, jobID, inputTextJobTitle,   inputTextCompanyTitle, result)
 
                             # go to new page if all jobs are done
+                            #TODO: you should not go to the next page, if there will be no next page
                             if count_job == len(IDs):                        
                                 # break right here in case last job was old, this will save another reload, and just speed thing up in general. If it matches, do a break statement, which will move onto the next job/location combo
                                 if any(phrase in last_link_text for phrase in ["week ago", 
@@ -465,9 +528,10 @@ class EasyApplyBot:
                                                                         #"4 days ago", 
                                                                         #"3 days ago", 
                                                                         #"2 days ago", 
-                                                                        "weeks ago", 
-                                                                        "month ago", 
-                                                                        "months ago"]):
+                                                                        #"weeks ago", 
+                                                                        #"month ago", 
+                                                                        #"months ago"
+                                                                        ]):
                                     log.debug("moving onto the next combo, due to no new jobs available to apply to for this combo")
                                     break # this skips this job/location combo
                                 jobs_per_page = jobs_per_page + 25
@@ -482,35 +546,14 @@ class EasyApplyBot:
                 log.info(e)
 
     #@profile
-    def write_to_file(self, button, jobID, browserTitle, result) -> None:
-        #@profile
-        def re_extract(text, pattern):
-            target = re.search(pattern, text)
-            if target:
-                target = target.group(1)
-            return target
-
+    def write_to_file(self, button, jobID, job, company, result) -> None:
         timestamp: str = datetime.now().strftime('%d/%m/%Y %H:%M')
         attempted: bool = False if button == False else True
-        # Split the browserTitle once and store the results
-        parts = browserTitle.split(' | ')
-
-        # Extract job ID and company information with regular expressions
-        job = re_extract(parts[0], r"\(?\d?\)?\s?(\w.*)")[:10]  # Limit job ID to 10 characters
-        company = re_extract(parts[1], r"(\w.*)")
 
         toWrite: list = [timestamp, jobID, job, company, attempted, result]
         with open(self.filename, 'a', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(toWrite)
-
-    #@profile
-    def get_job_page(self, jobID):
-
-        job: str = 'https://www.linkedin.com/jobs/view/' + str(jobID)
-        self.load_page_and_wait_until_it_stops_loading(job)
-        self.job_page = self.load_page(sleep=0.5)
-        return self.job_page
 
     #@profile
     def get_easy_apply_button(self):
@@ -523,11 +566,11 @@ class EasyApplyBot:
                     break
 
                 self.wait.until(EC.presence_of_all_elements_located((By.XPATH, '//button[contains(@class, "jobs-apply-button")]')))
-                button = self.browser.find_elements("xpath",
+                button = self.browser.find_element(By.XPATH,
                     '//button[contains(@class, "jobs-apply-button")]'
                     )
 
-                easyApplyButton = button[1]
+                easyApplyButton = button
                 if easyApplyButton:
                     break # Exit the loop if button is found successfully
             except IndexError: # this happens very rarely, it hapened only once after 1500 succesful applications
@@ -550,30 +593,40 @@ class EasyApplyBot:
                                                   button_locator[1])) > 0
 
         try:
-            time.sleep(random.uniform(1.5, 2.5))
             next_locater = (By.CSS_SELECTOR,
                             "button[aria-label='Continue to next step']")
             review_locater = (By.CSS_SELECTOR,
                               "button[aria-label='Review your application']")
-            submit_locater = (By.CSS_SELECTOR,
-                              "button[aria-label='Submit application']")
             submit_application_locator = (By.CSS_SELECTOR,
                                           "button[aria-label='Submit application']")
-            # follow_locator = (By.CSS_SELECTOR, "label[for='follow-company-checkbox']")
             term_agree = (By.CSS_SELECTOR, "label[data-test-text-selectable-option__label='I Agree Terms & Conditions']")
 
             question_element = (By.XPATH, "//span[contains(text(), 'Will you now or in the future require sponsorship for employment visa status?')]")
 
+            phone_number_input_field = (By.XPATH, '//*[contains(@aria-describedby, "phoneNumber-nationalNumber")]')
+
+            are_you_authorized_to_work_in_the_location = (By.XPATH, '//span[contains(text(), "Are you authorized to work in the job\'s location?")]')
+
             question_element_was_it_clicked_once_already_for_this_submission = False
+            question_element_was_it_clicked_once_already_for_this_submission2 = False
 
             submitted = False
             while True:
+                if is_present(phone_number_input_field):
+                    elements = driver.find_elements(By.XPATH, '//*[contains(@aria-describedby, "phoneNumber-nationalNumber")]')
+                    element = elements[0]
+                    current_text = element.get_attribute('value')
+                    if current_text:
+                        pass
+                    else:
+                        element.send_keys(self.phoneNumber)
+                        time.sleep(random.uniform(1.5, 2.5))
                 if is_present(term_agree):
                     button: None = self.wait.until(EC.element_to_be_clickable(term_agree))
                     button.click()
                     time.sleep(random.uniform(1.5, 2.5))
 
-                if is_present(question_element) and not question_element_was_it_clicked_once_already_for_this_submission:
+                if not question_element_was_it_clicked_once_already_for_this_submission and is_present(question_element):
                     input_element = self.browser.find_element(By.XPATH, 
                                                               "//span[contains(text(), 'Will you now or in the future require sponsorship for employment visa status?')]")
                     question_element_was_it_clicked_once_already_for_this_submission = True
@@ -588,13 +641,25 @@ class EasyApplyBot:
                     # actions.send_keys(Keys.SPACE).perform()
                     time.sleep(random.uniform(1.5, 2.5))
 
+                if not question_element_was_it_clicked_once_already_for_this_submission2 and is_present(are_you_authorized_to_work_in_the_location):
+                    input_element = self.browser.find_element(By.XPATH, 
+                                                              "//span[contains(text(), 'Are you authorized to work in the job's location?')]")
+                    question_element_was_it_clicked_once_already_for_this_submission2 = True
+                    input_element.click()
+                    time.sleep(1)
+                    # Create an ActionChains object
+                    actions = ActionChains(self.browser)
+                    # Send keys to the browser window using ActionChains
+                    actions.send_keys(Keys.TAB).perform()
+                    # actions.send_keys(Keys.SPACE).perform()
+                    time.sleep(random.uniform(1.5, 2.5))
+
                 # Click Next or submitt button if possible
                 button: None = None
                 buttons: list = [next_locater, 
                                  review_locater, 
-                                 #follow_locator, #good and works, but slows you down unecesserly, when following doesn't cause indentified harm
-                                 submit_locater, 
-                                 submit_application_locator]
+                                 submit_application_locator
+                                 ]
                 for i, button_locator in enumerate(buttons):
                     if is_present(button_locator):
                         button: None = self.wait.until(EC.element_to_be_clickable(button_locator))
@@ -611,6 +676,10 @@ class EasyApplyBot:
                     if (succesfully_finished_submission or 
                         succesfully_finished_submission_check2 or 
                         succesfully_finished_submission_check3
+                        # or
+                        # review_locater
+                        # or
+                        # submit_application_locator
                         ):
                         submitted = True
                         break
@@ -638,7 +707,15 @@ class EasyApplyBot:
                         break  # Break the outer loop if the flag is set
 
                     if button:
-                        button.click()
+                        try:
+                            # Wait for the link to be clickable and then click it
+                            WebDriverWait(self.browser, 10, poll_frequency=0.2).until(
+                                EC.element_to_be_clickable(button)
+                            )
+                            button.click()
+                        except (NoSuchElementException, TimeoutException):
+                            pass
+
                         time.sleep(random.uniform(1.5, 2.5))
                         if i in (3, 4):
                             submitted = True
@@ -670,14 +747,23 @@ class EasyApplyBot:
         except Exception as e:
             log.info(e)
             log.info("cannot apply to this job")
-            raise (e)
+            #raise (e)
 
         return submitted
 
     #@profile
-    def load_page(self, sleep=1):
+    def load_page(self, sleep=1, position=None):
         if sleep == 2:
             self.wait.until(lambda driver: self.browser.execute_script('return document.readyState') == 'complete')
+
+            # Detect if it says on the website "No matching jobs found", if so, don't waste time on scrolling the search results
+            try:
+                if "No matching jobs found" in self.browser.page_source:
+                    # return BeautifulSoup(self.browser.page_source, "lxml")
+                    return
+            except NoSuchElementException:
+                # No "No matching jobs found" message was found, continue with scrolling
+                pass
 
             try:
                 scrollresults = self.browser.find_element(By.CLASS_NAME,
@@ -687,26 +773,25 @@ class EasyApplyBot:
                 scrollresults = self.wait.until(EC.presence_of_element_located((By.CLASS_NAME, "jobs-search-results-list")))
                 scrollresults = self.browser.find_element(By.CLASS_NAME, "jobs-search-results-list")
 
-            # Detect if it says on the website "No matching jobs found", if so, don't waste time on scrolling the search results
-            try:
-                if "No matching jobs found" in self.browser.page_source:
-                    # return BeautifulSoup(self.browser.page_source, "lxml")
-                    return
-                
-            except NoSuchElementException:
-                # No "No matching jobs found" message was found, continue with scrolling
-                pass
+            # Locate the element and get the text
+            element = self.browser.find_element(By.XPATH, '//*[@id="main"]/div/div[2]/div[1]/header/div[1]/small/div/span')
+            text = element.text
+
+            # Remove " results" or " result" from the text
+            if " results" in text:
+                text = int(text.replace(" results", "").replace(",", ""))
+            elif " result" in text:
+                text = int(text.replace(" result", "").replace(",", ""))
+
+            if (position+25) < text:
+                text = 25 #if it's say 34, and we are on the first page, we would need to scroll down 25 times
+            else: # if it's 34 but we are on the second page
+                text = text - position
 
             # in case of just one result no scrolling is necessery 
-            # Max number of results is 25 (on one page, but technically it can say in text 143 results, it will be just multiple pages), and currently you have 21 scrolls to scroll it fully, and that works perfectly. The scrolling code works perfect, don't change, it's efficient
-            if not self.browser.find_elements(By.XPATH, "//*[contains(text(), '1 result')]"):
-                # Regular expression to find the pattern and extract the number
-                pattern = r'"USER_LOCALE","text":"(\d+) results"'
-                # Search for the first match in the page source
-                match = re.search(pattern, self.browser.page_source)
-                result = int(match.group(1)) if match and int(match.group(1)) <= 19 else 20
+            if text > 2:
                 # Selenium only detects visible elements; if we scroll to the bottom too fast, only 8-9 results will be loaded into IDs list
-                for i in range(300, result*150+300, 150): #potential for speeding up, just increase the last value gradually
+                for i in range(300, text*150, 150): #potential for speeding up, just increase the last value gradually
                     self.browser.execute_script("arguments[0].scrollTo(0, {})".format(i), scrollresults)
                     time.sleep(0.3) # otherwise it scrolls too fast
 
@@ -720,7 +805,7 @@ class EasyApplyBot:
             position + location + "&sortBy=DD" + "&start=" + str(jobs_per_page))
             
         # todo: now that would be a good call to do that scrolling thing, of the left pane
-        self.load_page(sleep=2)
+        self.load_page(position = jobs_per_page, sleep=2)
         return (self.browser, jobs_per_page)
     
     #@profile
@@ -740,6 +825,7 @@ if __name__ == '__main__':
     assert len(parameters['locations']) > 0
     assert parameters['username'] is not None
     assert parameters['password'] is not None
+    assert parameters['phoneNumber'] is not None
 
     log.info({k: parameters[k] for k in parameters.keys() if k not in ['username', 'password']})
 
@@ -750,6 +836,7 @@ if __name__ == '__main__':
 
     bot = EasyApplyBot(parameters['username'],
                        parameters['password'],
+                       parameters['phoneNumber'],
                        filename=output_filename,
                        blacklist=blacklist,
                        blackListTitles=blackListTitles
